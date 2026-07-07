@@ -30,3 +30,8 @@ class ProviderOut(BaseModel):
 
 class ModelsResponse(BaseModel):
     models: list[str]
+
+
+class FetchModelsRequest(BaseModel):
+    base_url: str
+    api_key: str

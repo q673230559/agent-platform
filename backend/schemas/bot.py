@@ -10,6 +10,10 @@ class BotCreate(BaseModel):
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     is_active: bool = True
     tool_ids: list[int] = []
+    avatar_url: str = ""
+    bio: str = Field("", max_length=300)
+    greeting_message: str = ""
+    tags: list[str] = []
 
 
 class BotUpdate(BaseModel):
@@ -20,6 +24,10 @@ class BotUpdate(BaseModel):
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     is_active: bool | None = None
     tool_ids: list[int] | None = None
+    avatar_url: str | None = None
+    bio: str | None = Field(None, max_length=300)
+    greeting_message: str | None = None
+    tags: list[str] | None = None
 
 
 class ToolOut(BaseModel):
@@ -47,6 +55,10 @@ class BotOut(BaseModel):
     temperature: float
     is_active: bool
     tools: list[ToolOut] = []
+    avatar_url: str = ""
+    bio: str = ""
+    greeting_message: str = ""
+    tags: list[str] = []
     created_at: datetime
     updated_at: datetime | None = None
 

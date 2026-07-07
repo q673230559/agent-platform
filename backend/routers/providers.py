@@ -4,10 +4,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from backend.database import get_db
 from backend.models.provider import ModelProvider
-from backend.schemas.provider import ProviderCreate, ProviderUpdate, ProviderOut, ModelsResponse
+from backend.schemas.provider import ProviderCreate, ProviderUpdate, ProviderOut, ModelsResponse, FetchModelsRequest
 from backend.services.crypto import encrypt, decrypt
 
 router = APIRouter(prefix="/providers", tags=["providers"])
+
+
+async def _fetch_models(base_url: str, api_key: str) -> list[str]:
+    url = f"{base_url.rstrip('/')}/models"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
+        resp.raise_for_status()
+        data = resp.json()
+    models = [m["id"] for m in data.get("data", []) if m.get("id")]
+    models.sort()
+    return models
 
 
 @router.get("", response_model=list[ProviderOut])
@@ -31,6 +42,15 @@ async def create_provider(data: ProviderCreate, db: AsyncSession = Depends(get_d
     await db.commit()
     await db.refresh(provider)
     return provider
+
+
+@router.post("/models", response_model=ModelsResponse)
+async def fetch_models(data: FetchModelsRequest):
+    try:
+        models = await _fetch_models(data.base_url, data.api_key)
+        return {"models": models}
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Failed to fetch models: {e}")
 
 
 @router.get("/{provider_id}", response_model=ProviderOut)
@@ -75,16 +95,8 @@ async def list_models(provider_id: int, db: AsyncSession = Depends(get_db)):
     provider = await db.get(ModelProvider, provider_id)
     if not provider:
         raise HTTPException(404, "Provider not found")
-    api_key = decrypt(provider.api_key)
-    base_url = provider.base_url.rstrip("/")
-    url = f"{base_url}/models"
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
-            resp.raise_for_status()
-            data = resp.json()
+        models = await _fetch_models(provider.base_url, decrypt(provider.api_key))
+        return {"models": models}
     except httpx.HTTPError as e:
         raise HTTPException(502, f"Failed to fetch models: {e}")
-    models = [m["id"] for m in data.get("data", []) if m.get("id")]
-    models.sort()
-    return {"models": models}

@@ -2,9 +2,9 @@ import { Link, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
 
 const navItems = [
-  { path: '/', label: 'Dashboard', icon: '◫' },
-  { path: '/providers', label: 'Providers', icon: '◇' },
-  { path: '/bots', label: 'Bots', icon: '◈' },
+  { path: '/', label: '首页', icon: '◫' },
+  { path: '/providers', label: '模型供应商', icon: '◇' },
+  { path: '/bots', label: '机器人', icon: '◈' },
 ]
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -16,7 +16,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
         <div className="p-5 border-b border-gray-800">
           <h1 className="text-lg font-bold text-white tracking-tight">Agent Platform</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Multi-model management</p>
+          <p className="text-xs text-gray-500 mt-0.5">多模型管理平台</p>
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {navItems.map((item) => {

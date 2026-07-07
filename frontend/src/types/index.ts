@@ -31,6 +31,10 @@ export interface Bot {
   temperature: number
   is_active: boolean
   tools: Tool[]
+  avatar_url: string
+  bio: string
+  greeting_message: string
+  tags: string[]
   created_at: string
   updated_at: string | null
 }
@@ -43,6 +47,10 @@ export interface BotForm {
   temperature: number
   is_active: boolean
   tool_ids: number[]
+  avatar_url: string
+  bio: string
+  greeting_message: string
+  tags: string[]
 }
 
 export interface Conversation {
@@ -68,6 +76,11 @@ export interface ChatRequest {
 
 export interface ModelsResponse {
   models: string[]
+}
+
+export interface FetchModelsRequest {
+  base_url: string
+  api_key: string
 }
 
 export interface SSEEvent {

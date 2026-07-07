@@ -55,6 +55,17 @@ export default function Chat() {
     setMessages([])
   }
 
+  const deleteConv = async (convId: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm('确定删除此对话？')) return
+    await conversationsApi.delete(convId)
+    setConvs(prev => prev.filter(c => c.id !== convId))
+    if (activeConv?.id === convId) {
+      setActiveConv(null)
+      setMessages([])
+    }
+  }
+
   const send = async () => {
     if (!input.trim() || streaming || !bot) return
 
@@ -109,9 +120,7 @@ export default function Chat() {
           return [...next]
         })
         setStreaming(false)
-        // Refresh conversation list and messages
         conversationsApi.list(bot.id).then(setConvs)
-        if (convId) loadMessages(convId)
       },
       (err) => {
         setMessages(prev => {
@@ -138,7 +147,7 @@ export default function Chat() {
   if (!bot) {
     return (
       <div className="p-8">
-        <p className="text-gray-400">Loading...</p>
+        <p className="text-gray-400">加载中...</p>
       </div>
     )
   }
@@ -149,29 +158,36 @@ export default function Chat() {
       <aside className="w-60 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
         <div className="p-3 border-b border-gray-800">
           <button onClick={newConv} className="w-full text-left px-3 py-2 rounded-lg bg-indigo-600/20 text-indigo-400 text-sm font-medium hover:bg-indigo-600/30 transition-colors">
-            + New Chat
+            + 新建对话
           </button>
         </div>
         <div className="p-2 border-b border-gray-800">
-          <button onClick={() => nav('/bots')} className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 transition-colors">&larr; Back to Bots</button>
+          <button onClick={() => nav('/bots')} className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 transition-colors">&larr; 返回机器人列表</button>
           <p className="text-xs text-gray-400 px-2 mt-1 truncate">{bot.name}</p>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
           {convs.map(c => (
-            <button
+            <div
               key={c.id}
               onClick={() => selectConv(c)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm truncate transition-colors ${
+              className={`group flex items-center gap-1 px-3 py-2 rounded-lg text-sm truncate cursor-pointer transition-colors ${
                 activeConv?.id === c.id
                   ? 'bg-gray-800 text-white'
                   : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
               }`}
             >
-              {c.title}
-            </button>
+              <span className="flex-1 truncate">{c.title}</span>
+              <button
+                onClick={e => deleteConv(c.id, e)}
+                className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all shrink-0 text-xs px-1"
+                title="删除对话"
+              >
+                &times;
+              </button>
+            </div>
           ))}
           {convs.length === 0 && (
-            <p className="text-xs text-gray-600 px-3 py-2">No conversations yet</p>
+            <p className="text-xs text-gray-600 px-3 py-2">暂无对话记录</p>
           )}
         </div>
       </aside>
@@ -182,15 +198,39 @@ export default function Chat() {
         <div className="flex-1 overflow-y-auto p-6">
           {messages.length === 0 && (
             <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <p className="text-gray-500 text-lg mb-2">Start a conversation</p>
-                <p className="text-gray-600 text-sm">Send a message to begin chatting with {bot.name}</p>
+              <div className="text-center max-w-sm">
+                {bot.avatar_url ? (
+                  <img src={bot.avatar_url} alt={bot.name} className="w-20 h-20 rounded-full object-cover bg-gray-800 mx-auto mb-4" />
+                ) : (
+                  <div className="w-20 h-20 rounded-full bg-indigo-600/30 text-indigo-400 flex items-center justify-center text-3xl font-bold mx-auto mb-4">
+                    {bot.name.charAt(0)}
+                  </div>
+                )}
+                <p className="text-white text-lg font-semibold mb-1">{bot.name}</p>
+                {bot.bio && <p className="text-gray-400 text-sm mb-4">{bot.bio}</p>}
+                {bot.greeting_message && (
+                  <div className="bg-gray-800/50 border-l-2 border-indigo-500 rounded-r-lg px-4 py-3 text-left">
+                    <p className="text-gray-300 text-sm whitespace-pre-wrap">{bot.greeting_message}</p>
+                  </div>
+                )}
+                {!bot.greeting_message && (
+                  <p className="text-gray-600 text-sm">发送消息开始与 {bot.name} 聊天</p>
+                )}
               </div>
             </div>
           )}
           <div className="max-w-3xl mx-auto space-y-5">
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div key={i} className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                {m.role === 'assistant' && (
+                  bot.avatar_url ? (
+                    <img src={bot.avatar_url} alt={bot.name} className="w-7 h-7 rounded-full object-cover bg-gray-700 shrink-0 mt-1" />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-indigo-600/30 text-indigo-400 flex items-center justify-center text-xs font-bold shrink-0 mt-1">
+                      {bot.name.charAt(0)}
+                    </div>
+                  )
+                )}
                 <div className={`max-w-[80%] rounded-xl px-4 py-3 ${
                   m.role === 'user'
                     ? 'bg-indigo-600 text-white'
@@ -202,7 +242,7 @@ export default function Chat() {
                   </div>
                   {m.tool_calls && m.tool_calls.length > 0 && (
                     <div className="mt-2 pt-2 border-t border-gray-700">
-                      <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Tool Calls</p>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">工具调用</p>
                       {m.tool_calls.map((tc: unknown, j: number) => (
                         <div key={j} className="text-xs text-gray-400 font-mono bg-gray-900 rounded px-2 py-1 mt-1">
                           {typeof tc === 'object' && tc !== null ? JSON.stringify(tc) : String(tc)}
@@ -223,7 +263,7 @@ export default function Chat() {
             <textarea
               className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white resize-none focus:outline-none focus:border-indigo-500"
               rows={1}
-              placeholder={`Message ${bot.name}... (Enter to send, Shift+Enter for newline)`}
+              placeholder={`向 ${bot.name} 发送消息... (Enter 发送, Shift+Enter 换行)`}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -234,7 +274,7 @@ export default function Chat() {
               disabled={streaming || !input.trim()}
               className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-5 rounded-xl text-sm font-medium transition-colors shrink-0"
             >
-              {streaming ? '...' : 'Send'}
+              {streaming ? '...' : '发送'}
             </button>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import type { Provider, ProviderForm, ModelsResponse, Bot, BotForm, Tool, Conversation, Message, ChatRequest } from '../types'
+import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest } from '../types'
 
 const BASE = '/api'
 
@@ -23,6 +23,7 @@ export const providersApi = {
   update: (id: number, data: Partial<ProviderForm>) => request<Provider>(`/providers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: number) => request<void>(`/providers/${id}`, { method: 'DELETE' }),
   models: (id: number) => request<ModelsResponse>(`/providers/${id}/models`),
+  fetchModels: (data: FetchModelsRequest) => request<ModelsResponse>('/providers/models', { method: 'POST', body: JSON.stringify(data) }),
 }
 
 // Bots

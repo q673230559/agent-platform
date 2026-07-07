@@ -7,12 +7,16 @@ class Bot(Base):
     __tablename__ = "bots"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False)
+    name = Column(String(100), nullable=False, unique=True)
     provider_id = Column(Integer, ForeignKey("model_providers.id"), nullable=False)
     model_name = Column(String(100), nullable=False)
     system_prompt = Column(Text, default="")
     temperature = Column(Float, default=0.7)
     is_active = Column(Boolean, default=True)
+    avatar_url = Column(String(500), default="")
+    bio = Column(String(300), default="")
+    greeting_message = Column(Text, default="")
+    tags = Column(JSON, default=list)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

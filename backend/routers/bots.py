@@ -37,6 +37,10 @@ def _bot_to_out(bot: Bot) -> BotOut:
         temperature=bot.temperature,
         is_active=bot.is_active,
         tools=tools,
+        avatar_url=bot.avatar_url or "",
+        bio=bot.bio or "",
+        greeting_message=bot.greeting_message or "",
+        tags=bot.tags or [],
         created_at=bot.created_at,
         updated_at=bot.updated_at,
     )
@@ -45,7 +49,7 @@ def _bot_to_out(bot: Bot) -> BotOut:
 @router.get("", response_model=list[BotOut])
 async def list_bots(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Bot).order_by(Bot.id))
-    return [_bot_to_out(b) for b in result.scalars().all()]
+    return [_bot_to_out(b) for b in result.unique().scalars().all()]
 
 
 @router.post("", response_model=BotOut, status_code=201)
@@ -53,6 +57,9 @@ async def create_bot(data: BotCreate, db: AsyncSession = Depends(get_db)):
     provider = await db.get(ModelProvider, data.provider_id)
     if not provider:
         raise HTTPException(404, "Provider not found")
+    existing = await db.scalar(select(Bot.id).where(Bot.name == data.name))
+    if existing is not None:
+        raise HTTPException(409, "Bot name already exists")
 
     bot = Bot(
         name=data.name,
@@ -61,6 +68,10 @@ async def create_bot(data: BotCreate, db: AsyncSession = Depends(get_db)):
         system_prompt=data.system_prompt,
         temperature=data.temperature,
         is_active=data.is_active,
+        avatar_url=data.avatar_url,
+        bio=data.bio,
+        greeting_message=data.greeting_message,
+        tags=data.tags,
     )
     db.add(bot)
     await db.flush()
@@ -91,6 +102,10 @@ async def update_bot(bot_id: int, data: BotUpdate, db: AsyncSession = Depends(ge
     bot = await db.get(Bot, bot_id)
     if not bot:
         raise HTTPException(404, "Bot not found")
+    if data.name is not None:
+        existing = await db.scalar(select(Bot.id).where(Bot.name == data.name, Bot.id != bot_id))
+        if existing is not None:
+            raise HTTPException(409, "Bot name already exists")
 
     for field, value in data.model_dump(exclude_unset=True, exclude={"tool_ids"}).items():
         if value is not None:
@@ -159,7 +174,7 @@ async def list_conversations(bot_id: int | None = None, db: AsyncSession = Depen
     if bot_id is not None:
         q = q.where(Conversation.bot_id == bot_id)
     result = await db.execute(q)
-    return result.scalars().all()
+    return result.unique().scalars().all()
 
 
 @router2.delete("/{conversation_id}", status_code=204)
