@@ -253,7 +253,7 @@ async def chat(bot_id: int, req: ChatRequest, db: AsyncSession = Depends(get_db)
         full_response = ""
         tool_calls_log = None
         try:
-            async for event in stream_chat(bot, provider, req.message, history):
+            async for event in stream_chat(bot, provider, req.message, history, bot.system_prompt or ""):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 if event["type"] == "token":
                     full_response += event["content"]

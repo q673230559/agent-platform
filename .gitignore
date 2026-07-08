@@ -22,6 +22,9 @@ frontend/dist/
 # Docker
 mysql_data/
 
+# Agent workspace (user files created by tools)
+workspace/
+
 # OS
 .DS_Store
 Thumbs.db

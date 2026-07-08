@@ -25,6 +25,9 @@ services:
     environment:
       DATABASE_URL: mysql+aiomysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-agent_platform}
       FERNET_KEY: ${FERNET_KEY}
+      WORKSPACE_ROOT: /workspace
+    volumes:
+      - ./workspace:/workspace
     ports:
       - "8000:8000"
     networks:

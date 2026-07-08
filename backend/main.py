@@ -1,3 +1,16 @@
+import os
+os.environ["LANGCHAIN_VERBOSE"] = "true"
+
+import logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+# Silence noisy third-party loggers
+for lib in ("httpcore", "urllib3", "asyncio", "aiomysql"):
+    logging.getLogger(lib).setLevel(logging.WARNING)
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

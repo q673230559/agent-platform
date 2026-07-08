@@ -21,11 +21,17 @@ async def get_db() -> AsyncSession:
 
 async def init_db():
     async with engine.begin() as conn:
-        # Drop bot-related tables to rebuild with new schema
-        await conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
-        await conn.execute(text("DROP TABLE IF EXISTS messages"))
-        await conn.execute(text("DROP TABLE IF EXISTS conversations"))
-        await conn.execute(text("DROP TABLE IF EXISTS bot_tools"))
-        await conn.execute(text("DROP TABLE IF EXISTS bots"))
-        await conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
         await conn.run_sync(Base.metadata.create_all)
+        # Add missing columns if any (idempotent migration)
+        existing = await conn.execute(text("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'bots'"))
+        rows = existing.fetchall()
+        existing_cols = {r[0] for r in rows}
+        migrations = {
+            "avatar_url": "ALTER TABLE bots ADD COLUMN avatar_url VARCHAR(500) NOT NULL DEFAULT ''",
+            "bio": "ALTER TABLE bots ADD COLUMN bio VARCHAR(300) NOT NULL DEFAULT ''",
+            "greeting_message": "ALTER TABLE bots ADD COLUMN greeting_message TEXT NOT NULL DEFAULT ''",
+            "tags": "ALTER TABLE bots ADD COLUMN tags JSON NOT NULL DEFAULT ('[]')",
+        }
+        for col, sql in migrations.items():
+            if col not in existing_cols:
+                await conn.execute(text(sql))
