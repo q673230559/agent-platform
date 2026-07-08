@@ -7,6 +7,10 @@ from backend.tools.builtin import (
     glob_files,
     grep_files,
     web_fetch,
+    poetry_search,
+    poetry_random,
+    poetry_get,
+    poetry_authors,
 )
 
 registry: dict[str, object] = {
@@ -18,4 +22,8 @@ registry: dict[str, object] = {
     "glob_files": glob_files,
     "grep_files": grep_files,
     "web_fetch": web_fetch,
+    "poetry_search": poetry_search,
+    "poetry_random": poetry_random,
+    "poetry_get": poetry_get,
+    "poetry_authors": poetry_authors,
 }

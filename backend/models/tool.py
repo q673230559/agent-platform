@@ -63,6 +63,26 @@ class BuiltinTool(Base):
                         display_name="Web Fetch",
                         description="Fetch and parse a web page, returning text content as markdown",
                     ),
+                    BuiltinTool(
+                        name="poetry_search",
+                        display_name="Poetry Search",
+                        description="Search Chinese poems by keyword (Tang, Song, Yuan, nearly 400k poems)",
+                    ),
+                    BuiltinTool(
+                        name="poetry_random",
+                        display_name="Poetry Random",
+                        description="Get a random Chinese poem",
+                    ),
+                    BuiltinTool(
+                        name="poetry_get",
+                        display_name="Poetry Get",
+                        description="Get a specific poem by its ID number",
+                    ),
+                    BuiltinTool(
+                        name="poetry_authors",
+                        display_name="Poetry Authors",
+                        description="List Chinese poets/authors with their dynasty information",
+                    ),
                 ]
                 db.add_all(tools)
                 await db.commit()

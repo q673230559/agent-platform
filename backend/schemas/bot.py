@@ -83,7 +83,7 @@ class MessageOut(BaseModel):
     conversation_id: int
     role: str
     content: str
-    tool_calls: dict | None = None
+    tool_calls: list[dict] | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

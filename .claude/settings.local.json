@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://poetry.palemoky.com/api/v1/authors?page=1&page_size=3\")",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s \"https://poetry.palemoky.com/api/v1/poems?page=1&page_size=3\")",
+      "Bash(curl -sv \"https://poetry.palemoky.com/api/v1/poems/search?q=%E9%9D%99%E5%A4%9C%E6%80%9D&type=title\")",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -s \"https://poetry.palemoky.com/api/poems/random?lang=zh-Hans\" -H \"accept: application/json\")",
+      "Bash(curl -s \"https://poetry.palemoky.com/api/poems/search?q=%E9%9D%99%E5%A4%9C%E6%80%9D&type=title&lang=zh-Hans\" -H \"accept: application/json\")",
+      "Bash(curl -s \"https://poetry.palemoky.com/api/authors?page=1&page_size=3&lang=zh-Hans\" -H \"accept: application/json\")",
+      "Bash(curl -s http://localhost:8000/api/tools)",
+      "Bash(python -c \"import sys,json; [print\\(f'{t[\\\\\"id\\\\\"]:>2}. {t[\\\\\"name\\\\\"]}'\\) for t in json.load\\(sys.stdin\\)]\")",
+      "Bash(python -c ' *)"
+    ]
+  }
+}
