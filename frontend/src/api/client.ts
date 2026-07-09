@@ -1,4 +1,4 @@
-import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest } from '../types'
+import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, MultiAgentSSEEvent } from '../types'
 
 const BASE = '/api'
 
@@ -96,6 +96,97 @@ export function chatStream(
     }
   }).catch((err) => {
     if (err.name !== 'AbortError') onError(err.message)
+  })
+  return controller
+}
+
+// Orchestrations
+export const orchestrationsApi = {
+  list: () => request<Orchestration[]>('/orchestrations'),
+  get: (id: number) => request<Orchestration>(`/orchestrations/${id}`),
+  create: (data: OrchestrationForm) =>
+    request<Orchestration>('/orchestrations', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: number, data: Partial<OrchestrationForm>) =>
+    request<Orchestration>(`/orchestrations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: number) =>
+    request<void>(`/orchestrations/${id}`, { method: 'DELETE' }),
+  runs: (id: number) => request<OrchestrationRun[]>(`/orchestrations/${id}/runs`),
+  runDetail: (runId: number) => request<OrchestrationRun>(`/orchestrations/runs/${runId}`),
+  deleteRun: (runId: number) => request<void>(`/orchestrations/runs/${runId}`, { method: 'DELETE' }),
+}
+
+export function orchestrationStream(
+  orchestrationId: number,
+  message: string,
+  callbacks: {
+    onStart: (nodes: { id: number; label: string; node_type: string }[]) => void
+    onNodeStart: (nodeId: number, label: string) => void
+    onToken: (nodeId: number, label: string, token: string) => void
+    onToolCall: (nodeId: number, label: string, data: unknown) => void
+    onNodeEnd: (nodeId: number, label: string, output: string) => void
+    onNodeError: (nodeId: number, label: string, error: string) => void
+    onDone: (result: Record<string, unknown>) => void
+    onError: (err: string) => void
+  },
+): AbortController {
+  const controller = new AbortController()
+  fetch(`${BASE}/orchestrations/${orchestrationId}/execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+    signal: controller.signal,
+  }).then(async (res) => {
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      callbacks.onError(err.detail || res.statusText)
+      return
+    }
+    const reader = res.body?.getReader()
+    if (!reader) return
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const evt: MultiAgentSSEEvent = JSON.parse(line.slice(6))
+            switch (evt.type) {
+              case 'orchestration_start':
+                callbacks.onStart(evt.nodes || [])
+                break
+              case 'node_start':
+                callbacks.onNodeStart(evt.node_id!, evt.node_label!)
+                break
+              case 'token':
+                callbacks.onToken(evt.node_id!, evt.node_label!, evt.content!)
+                break
+              case 'tool_call':
+                callbacks.onToolCall(evt.node_id!, evt.node_label!, evt.content!)
+                break
+              case 'node_end':
+                callbacks.onNodeEnd(evt.node_id!, evt.node_label!, evt.output || '')
+                break
+              case 'node_error':
+                callbacks.onNodeError(evt.node_id!, evt.node_label!, evt.content || '')
+                break
+              case 'orchestration_done':
+                callbacks.onDone(evt.result || {})
+                break
+              case 'error':
+                callbacks.onError(evt.content!)
+                break
+            }
+          } catch { /* ignore parse errors */ }
+        }
+      }
+    }
+  }).catch((err) => {
+    if (err.name !== 'AbortError') callbacks.onError(err.message)
   })
   return controller
 }

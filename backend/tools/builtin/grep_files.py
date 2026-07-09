@@ -2,11 +2,11 @@ import pathlib
 import subprocess
 import re
 from langchain.tools import tool
-from backend.config import WORKSPACE_ROOT
+from backend.config import get_workspace
 
 
 def _safe_path(path: str) -> pathlib.Path:
-    root = pathlib.Path(WORKSPACE_ROOT).resolve()
+    root = pathlib.Path(get_workspace()).resolve()
     resolved = (root / path).resolve()
     if not str(resolved).startswith(str(root)):
         raise ValueError(f"Path traversal denied: {path}")
@@ -24,7 +24,7 @@ def grep_files(pattern: str, path: str = ".", glob: str = "", head_limit: int = 
         head_limit: max number of matching lines to return (default 100)
     """
     try:
-        base = _safe_path(path) if path != "." else pathlib.Path(WORKSPACE_ROOT).resolve()
+        base = _safe_path(path) if path != "." else pathlib.Path(get_workspace()).resolve()
 
         # Try ripgrep first for performance
         try:
@@ -41,7 +41,7 @@ def grep_files(pattern: str, path: str = ".", glob: str = "", head_limit: int = 
             for file_path in base.rglob(file_pattern):
                 if file_path.is_file():
                     try:
-                        rel = str(file_path.relative_to(pathlib.Path(WORKSPACE_ROOT).resolve()))
+                        rel = str(file_path.relative_to(pathlib.Path(get_workspace()).resolve()))
                         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                             for i, line in enumerate(f, start=1):
                                 if re.search(pattern, line):

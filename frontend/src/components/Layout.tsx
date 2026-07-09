@@ -5,6 +5,7 @@ const navItems = [
   { path: '/', label: '首页', icon: '◫' },
   { path: '/providers', label: '模型供应商', icon: '◇' },
   { path: '/bots', label: '机器人', icon: '◈' },
+  { path: '/orchestrations', label: '任务编排', icon: '◎' },
 ]
 
 export default function Layout({ children }: { children: ReactNode }) {

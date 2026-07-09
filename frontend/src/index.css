@@ -12,3 +12,54 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+/* React Flow dark theme overrides */
+.react-flow__node-default {
+  background: #1f2937 !important;
+  border-color: #4b5563 !important;
+  color: #e5e7eb !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.react-flow__node-default.selected {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.4);
+}
+.react-flow__handle {
+  background: #6366f1 !important;
+  border: 2px solid #1f2937 !important;
+  width: 10px !important;
+  height: 10px !important;
+}
+.react-flow__attribution {
+  display: none !important;
+}
+.react-flow__minimap {
+  background: #111827 !important;
+}
+.react-flow__controls-button {
+  background: #1f2937 !important;
+  border-color: #4b5563 !important;
+  fill: #e5e7eb !important;
+}
+.react-flow__controls-button:hover {
+  background: #374151 !important;
+}
+.react-flow__edge-textbg {
+  fill: #1f2937 !important;
+}
+.react-flow__edge-text {
+  fill: #9ca3af !important;
+}
+
+/* Orchestration run: pulsing glow for running nodes */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(129, 140, 248, 0.4), 0 0 20px rgba(129, 140, 248, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(129, 140, 248, 0.7), 0 0 32px rgba(129, 140, 248, 0.25);
+  }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 1.8s ease-in-out infinite;
+}

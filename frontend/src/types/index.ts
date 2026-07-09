@@ -88,3 +88,96 @@ export interface SSEEvent {
   content: string
   tool_calls?: unknown[]
 }
+
+// ── Orchestration ──
+
+export type OrchestrationType = 'supervisor' | 'dag' | 'swarm'
+
+export interface OrchestrationNodeData {
+  id: number
+  node_type: string
+  label: string
+  position_x: number
+  position_y: number
+  config: Record<string, unknown>
+}
+
+export interface OrchestrationEdgeData {
+  id: number
+  source_node_id: number
+  target_node_id: number
+  condition: string
+  label: string
+  is_default: boolean
+}
+
+export interface Orchestration {
+  id: number
+  name: string
+  description: string
+  orchestration_type: OrchestrationType
+  config: Record<string, unknown>
+  is_active: boolean
+  nodes: OrchestrationNodeData[]
+  edges: OrchestrationEdgeData[]
+  created_at: string
+  updated_at: string | null
+}
+
+export interface NodeForm {
+  node_type: string
+  label: string
+  position_x: number
+  position_y: number
+  config: Record<string, unknown>
+  temp_id: string
+}
+
+export interface EdgeForm {
+  source_node_id: number
+  target_node_id: number
+  condition: string
+  label: string
+  is_default: boolean
+}
+
+export interface OrchestrationForm {
+  name: string
+  description: string
+  orchestration_type: OrchestrationType
+  config: Record<string, unknown>
+  is_active: boolean
+  nodes: NodeForm[]
+  edges: EdgeForm[]
+}
+
+export interface OrchestrationRun {
+  id: number
+  orchestration_id: number
+  input_message: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  result: Record<string, unknown> | null
+  events: RunEvent[]
+  created_at: string
+  completed_at: string | null
+}
+
+export interface RunEvent {
+  id: number
+  node_id: number | null
+  event_type: string
+  content: string
+  metadata: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface MultiAgentSSEEvent {
+  type: 'orchestration_start' | 'node_start' | 'token' | 'tool_call' | 'node_end' | 'node_error' | 'orchestration_done' | 'error'
+  node_id?: number
+  node_label?: string
+  nodes?: { id: number; label: string; node_type: string }[]
+  content?: string
+  output?: string
+  result?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}

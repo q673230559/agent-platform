@@ -1,10 +1,10 @@
 import pathlib
 from langchain.tools import tool
-from backend.config import WORKSPACE_ROOT
+from backend.config import get_workspace
 
 
 def _safe_path(path: str) -> pathlib.Path:
-    root = pathlib.Path(WORKSPACE_ROOT).resolve()
+    root = pathlib.Path(get_workspace()).resolve()
     resolved = (root / path).resolve()
     if not str(resolved).startswith(str(root)):
         raise ValueError(f"Path traversal denied: {path}")

@@ -1,3 +1,4 @@
+import time
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,10 @@ from backend.services.crypto import encrypt, decrypt
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 
+# In-memory cache: {provider_id: (models, timestamp)}
+_model_cache: dict[int, tuple[list[str], float]] = {}
+_CACHE_TTL = 7200  # 2 hours
+
 
 async def _fetch_models(base_url: str, api_key: str) -> list[str]:
     url = f"{base_url.rstrip('/')}/models"
@@ -19,6 +24,16 @@ async def _fetch_models(base_url: str, api_key: str) -> list[str]:
     models = [m["id"] for m in data.get("data", []) if m.get("id")]
     models.sort()
     return models
+
+
+def _cached_models(provider_id: int) -> list[str] | None:
+    entry = _model_cache.get(provider_id)
+    if entry:
+        models, ts = entry
+        if time.time() - ts < _CACHE_TTL:
+            return models
+        del _model_cache[provider_id]
+    return None
 
 
 @router.get("", response_model=list[ProviderOut])
@@ -95,8 +110,12 @@ async def list_models(provider_id: int, db: AsyncSession = Depends(get_db)):
     provider = await db.get(ModelProvider, provider_id)
     if not provider:
         raise HTTPException(404, "Provider not found")
+    cached = _cached_models(provider_id)
+    if cached is not None:
+        return {"models": cached}
     try:
         models = await _fetch_models(provider.base_url, decrypt(provider.api_key))
+        _model_cache[provider_id] = (models, time.time())
         return {"models": models}
     except httpx.HTTPError as e:
         raise HTTPException(502, f"Failed to fetch models: {e}")

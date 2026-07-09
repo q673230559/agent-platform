@@ -5,6 +5,11 @@ import Providers from './pages/Providers'
 import Bots from './pages/Bots'
 import BotEditor from './pages/BotEditor'
 import Chat from './pages/Chat'
+import Orchestrations from './pages/Orchestrations'
+import OrchestrationEditor from './pages/OrchestrationEditor'
+import OrchestrationRun from './pages/OrchestrationRun'
+import RunHistory from './pages/RunHistory'
+import RunDetail from './pages/RunDetail'
 
 export default function App() {
   return (
@@ -16,6 +21,12 @@ export default function App() {
         <Route path="/bots/new" element={<BotEditor />} />
         <Route path="/bots/:id/edit" element={<BotEditor />} />
         <Route path="/chat/:botId" element={<Chat />} />
+        <Route path="/orchestrations" element={<Orchestrations />} />
+        <Route path="/orchestrations/new" element={<OrchestrationEditor />} />
+        <Route path="/orchestrations/:id/edit" element={<OrchestrationEditor />} />
+        <Route path="/orchestrations/:id/run" element={<OrchestrationRun />} />
+        <Route path="/orchestrations/:id/runs" element={<RunHistory />} />
+        <Route path="/orchestrations/:id/runs/:runId" element={<RunDetail />} />
       </Routes>
     </Layout>
   )
