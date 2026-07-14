@@ -20,6 +20,7 @@ export interface Tool {
   name: string
   display_name: string
   description: string
+  category: string
 }
 
 export interface Bot {
@@ -118,6 +119,11 @@ export interface Orchestration {
   orchestration_type: OrchestrationType
   config: Record<string, unknown>
   is_active: boolean
+  cron_expression: string | null
+  schedule_enabled: boolean
+  max_retries: number
+  recursion_limit: number
+  next_run_at: string | null
   nodes: OrchestrationNodeData[]
   edges: OrchestrationEdgeData[]
   created_at: string
@@ -147,6 +153,10 @@ export interface OrchestrationForm {
   orchestration_type: OrchestrationType
   config: Record<string, unknown>
   is_active: boolean
+  cron_expression: string | null
+  schedule_enabled: boolean
+  max_retries: number
+  recursion_limit: number
   nodes: NodeForm[]
   edges: EdgeForm[]
 }
@@ -155,7 +165,7 @@ export interface OrchestrationRun {
   id: number
   orchestration_id: number
   input_message: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped'
   result: Record<string, unknown> | null
   events: RunEvent[]
   created_at: string
@@ -171,13 +181,21 @@ export interface RunEvent {
   created_at: string
 }
 
+export interface WorkspaceTreeItem {
+  name: string
+  path: string
+  type: 'directory' | 'file'
+  children: WorkspaceTreeItem[]
+}
+
 export interface MultiAgentSSEEvent {
-  type: 'orchestration_start' | 'node_start' | 'token' | 'tool_call' | 'node_end' | 'node_error' | 'orchestration_done' | 'error'
+  type: 'orchestration_start' | 'node_start' | 'token' | 'tool_call' | 'node_end' | 'node_skip' | 'node_error' | 'orchestration_done' | 'error'
   node_id?: number
   node_label?: string
   nodes?: { id: number; label: string; node_type: string }[]
   content?: string
   output?: string
   result?: Record<string, unknown>
+  failed?: boolean
   metadata?: Record<string, unknown>
 }

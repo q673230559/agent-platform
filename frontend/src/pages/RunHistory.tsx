@@ -74,9 +74,10 @@ export default function RunHistory() {
                   <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
                     run.status === 'completed' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-600/30' :
                     run.status === 'failed' ? 'bg-red-600/20 text-red-400 border-red-600/30' :
+                    run.status === 'stopped' ? 'bg-amber-600/20 text-amber-400 border-amber-600/30' :
                     'bg-gray-800 text-gray-400 border-gray-700'
                   }`}>
-                    {run.status === 'completed' ? '完成' : run.status === 'failed' ? '失败' : run.status}
+                    {run.status === 'completed' ? '完成' : run.status === 'failed' ? '失败' : run.status === 'stopped' ? '已停止' : run.status}
                   </span>
                   <span className="text-xs text-gray-600">
                     {run.events?.filter((e) => e.event_type === 'node_start').length || 0} 个节点

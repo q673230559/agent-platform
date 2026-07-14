@@ -1,5 +1,4 @@
 from backend.tools.builtin import (
-    calculator,
     web_search,
     read_file,
     write_file,
@@ -11,10 +10,10 @@ from backend.tools.builtin import (
     poetry_random,
     poetry_get,
     poetry_authors,
+    get_current_time,
 )
 
 registry: dict[str, object] = {
-    "calculator": calculator,
     "web_search": web_search,
     "read_file": read_file,
     "write_file": write_file,
@@ -26,4 +25,5 @@ registry: dict[str, object] = {
     "poetry_random": poetry_random,
     "poetry_get": poetry_get,
     "poetry_authors": poetry_authors,
+    "get_current_time": get_current_time,
 }

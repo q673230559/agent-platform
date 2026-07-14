@@ -17,13 +17,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.database import init_db
 from backend.routers import providers, bots, tools, orchestrations
 from backend.models.tool import BuiltinTool
+from backend.services.scheduler import load_all_schedules
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     BuiltinTool.seed()
-    yield
+
+    import backend.services.scheduler as sched_mod
+    sched_mod.scheduler = AsyncIOScheduler()
+    sched_mod.scheduler.start()
+    await load_all_schedules()
+
+    try:
+        yield
+    finally:
+        sched_mod.scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="Agent Platform", version="1.0.0", lifespan=lifespan)

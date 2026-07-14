@@ -27,6 +27,7 @@ def _bot_to_out(bot: Bot) -> BotOut:
                 name=link.tool.name,
                 display_name=link.tool.display_name,
                 description=link.tool.description or "",
+                category=link.tool.category or "",
             ))
     return BotOut(
         id=bot.id,

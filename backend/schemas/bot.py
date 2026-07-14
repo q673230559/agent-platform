@@ -35,6 +35,7 @@ class ToolOut(BaseModel):
     name: str
     display_name: str
     description: str
+    category: str = ""
 
     model_config = {"from_attributes": True}
 

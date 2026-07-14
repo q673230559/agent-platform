@@ -1,0 +1,15 @@
+Collecting apscheduler
+  Downloading apscheduler-3.11.3-py3-none-any.whl.metadata (6.5 kB)
+Collecting tzlocal>=3.0 (from apscheduler)
+  Downloading tzlocal-5.4.4-py3-none-any.whl.metadata (7.7 kB)
+Collecting tzdata (from tzlocal>=3.0->apscheduler)
+  Downloading tzdata-2026.3-py2.py3-none-any.whl.metadata (1.4 kB)
+Downloading apscheduler-3.11.3-py3-none-any.whl (66 kB)
+Downloading tzlocal-5.4.4-py3-none-any.whl (18 kB)
+Downloading tzdata-2026.3-py2.py3-none-any.whl (348 kB)
+Installing collected packages: tzdata, tzlocal, apscheduler
+
+Successfully installed apscheduler-3.11.3 tzdata-2026.3 tzlocal-5.4.4
+
+[notice] A new release of pip is available: 25.1.1 -> 26.1.2
+[notice] To update, run: python.exe -m pip install --upgrade pip

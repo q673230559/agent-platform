@@ -23,6 +23,10 @@ class Orchestration(Base):
     )
     config = Column(JSON, default=dict)
     is_active = Column(Boolean, default=True)
+    cron_expression = Column(String(100), nullable=True)
+    schedule_enabled = Column(Boolean, default=False)
+    max_retries = Column(Integer, default=1)
+    recursion_limit = Column(Integer, default=50)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -45,12 +49,13 @@ class OrchestrationNode(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     orchestration_id = Column(Integer, ForeignKey("orchestrations.id", ondelete="CASCADE"), nullable=False)
-    node_type = Column(String(20), default="agent")  # 'start' | 'end' | 'agent'
+    node_type = Column(String(20), default="agent")  # 'start' | 'end' | 'agent' | 'decision_agent' | 'python_script'
     label = Column(String(100), default="")
     position_x = Column(Integer, default=0)
     position_y = Column(Integer, default=0)
     config = Column(JSON, default=dict)
     # Agent nodes: config = {provider_id, model_name, system_prompt, temperature, tools}
+    # Python script nodes: config = {script, requirements}
     # Start/End nodes: config = {}
 
     orchestration = relationship("Orchestration", back_populates="nodes")

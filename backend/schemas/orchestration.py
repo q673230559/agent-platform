@@ -6,11 +6,11 @@ from backend.models.orchestration import OrchestrationType
 # ── Node schemas ──
 
 class NodeCreate(BaseModel):
-    node_type: str = "agent"  # 'start' | 'end' | 'agent'
+    node_type: str = "agent"  # 'start' | 'end' | 'agent' | 'decision_agent' | 'python_script' | 'decision_script'
     label: str = ""
     position_x: int = 0
     position_y: int = 0
-    config: dict = {}  # agent: {provider_id, model_name, system_prompt, temperature, tools}; start/end: {}
+    config: dict = {}  # agent: {...}; python_script: {script, requirements}; start/end: {}
     temp_id: str = ""
 
 
@@ -64,6 +64,10 @@ class OrchestrationCreate(BaseModel):
     nodes: list[NodeCreate] = []
     edges: list[EdgeCreate] = []
     is_active: bool = True
+    cron_expression: str | None = None
+    schedule_enabled: bool = False
+    max_retries: int = 1
+    recursion_limit: int = 50
 
 
 class OrchestrationUpdate(BaseModel):
@@ -72,6 +76,10 @@ class OrchestrationUpdate(BaseModel):
     orchestration_type: OrchestrationType | None = None
     config: dict | None = None
     is_active: bool | None = None
+    cron_expression: str | None = None
+    schedule_enabled: bool | None = None
+    max_retries: int | None = None
+    recursion_limit: int | None = None
     nodes: list[NodeCreate] | None = None
     edges: list[EdgeCreate] | None = None
 
@@ -83,12 +91,26 @@ class OrchestrationOut(BaseModel):
     orchestration_type: OrchestrationType
     config: dict
     is_active: bool
+    cron_expression: str | None = None
+    schedule_enabled: bool = False
+    max_retries: int = 1
+    recursion_limit: int = 50
+    next_run_at: datetime | None = None
     nodes: list[NodeOut] = []
     edges: list[EdgeOut] = []
     created_at: datetime
     updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+# ── Workspace ──
+
+class WorkspaceTreeItem(BaseModel):
+    name: str
+    path: str
+    type: str  # "directory" | "file"
+    children: list["WorkspaceTreeItem"] = []
 
 
 # ── Execution ──

@@ -52,9 +52,10 @@ export default function RunDetail() {
           <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
             run.status === 'completed' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-600/30' :
             run.status === 'failed' ? 'bg-red-600/20 text-red-400 border-red-600/30' :
+            run.status === 'stopped' ? 'bg-amber-600/20 text-amber-400 border-amber-600/30' :
             'bg-gray-800 text-gray-400 border-gray-700'
           }`}>
-            {run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : run.status}
+            {run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : run.status === 'stopped' ? '已停止' : run.status}
           </span>
           <span className="text-xs text-gray-600">{run.created_at ? new Date(run.created_at).toLocaleString('zh-CN') : ''}</span>
         </div>
@@ -78,7 +79,8 @@ export default function RunDetail() {
                     {evt.event_type === 'node_end' && <span className="inline-block w-2 h-2 rounded-full bg-gray-500" />}
                     {evt.event_type === 'node_error' && <span className="inline-block w-2 h-2 rounded-full bg-red-500" />}
                     {evt.event_type === 'tool_call' && <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />}
-                    {!['node_start', 'node_end', 'node_error', 'tool_call'].includes(evt.event_type) && (
+                    {evt.event_type === 'node_skip' && <span className="inline-block w-2 h-2 rounded-full bg-gray-600" />}
+                    {!['node_start', 'node_end', 'node_error', 'tool_call', 'node_skip'].includes(evt.event_type) && (
                       <span className="inline-block w-2 h-2 rounded-full bg-gray-500" />
                     )}
                   </div>
@@ -88,12 +90,14 @@ export default function RunDetail() {
                         evt.event_type === 'node_start' ? 'text-indigo-400' :
                         evt.event_type === 'node_end' ? 'text-gray-400' :
                         evt.event_type === 'node_error' ? 'text-red-400' :
-                        evt.event_type === 'tool_call' ? 'text-amber-400' : 'text-gray-400'
+                        evt.event_type === 'tool_call' ? 'text-amber-400' :
+                        evt.event_type === 'node_skip' ? 'text-gray-500' : 'text-gray-400'
                       }`}>
                         {evt.event_type === 'node_start' ? '开始执行' :
                          evt.event_type === 'node_end' ? '执行完成' :
                          evt.event_type === 'node_error' ? '执行异常' :
-                         evt.event_type === 'tool_call' ? '工具调用' : evt.event_type}
+                         evt.event_type === 'tool_call' ? '工具调用' :
+                         evt.event_type === 'node_skip' ? '已跳过' : evt.event_type}
                       </span>
                       <span className="text-[11px] text-gray-600">{evt.created_at ? new Date(evt.created_at).toLocaleTimeString('zh-CN') : ''}</span>
                     </div>
@@ -110,6 +114,14 @@ export default function RunDetail() {
                         return <p className="text-xs text-gray-500 mt-1 truncate">{evt.content}</p>
                       }
                     })()}
+                    {evt.event_type === 'node_error' && evt.content && (
+                      <div className="text-xs text-red-300 bg-red-900/20 border border-red-800/50 rounded-lg px-3 py-2 mt-1 whitespace-pre-wrap leading-relaxed">
+                        {evt.content}
+                      </div>
+                    )}
+                    {evt.event_type === 'node_skip' && evt.content && (
+                      <p className="text-xs text-gray-500 mt-1">{evt.content}</p>
+                    )}
                     {evt.event_type === 'node_end' && evt.content && (
                       <div className="text-xs text-gray-300 bg-gray-800 rounded-lg px-3 py-2 mt-1 max-h-80 overflow-y-auto whitespace-pre-wrap leading-relaxed">
                         {evt.content.replace(/^"/, '').replace(/"$/, '').replace(/\\n/g, '\n').replace(/\\"/g, '"')}

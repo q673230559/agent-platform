@@ -294,27 +294,39 @@ export default function BotEditor() {
           </div>
         </div>
 
-        {/* Tools */}
+        {/* Tools - Grouped by category */}
         <div>
           <label className="block text-xs text-gray-500 mb-2">工具</label>
-          <div className="flex flex-wrap gap-2">
-            {tools.map(t => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => toggleTool(t.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                  form.tool_ids.includes(t.id)
-                    ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400'
-                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
-                }`}
-                title={t.description}
-              >
-                {t.display_name}
-              </button>
-            ))}
-            {tools.length === 0 && <p className="text-xs text-gray-600">暂无可用工具</p>}
-          </div>
+          {Object.entries(
+            tools.reduce<Record<string, Tool[]>>((acc, t) => {
+              const cat = t.category || '其他'
+              if (!acc[cat]) acc[cat] = []
+              acc[cat].push(t)
+              return acc
+            }, {})
+          ).map(([cat, catTools]) => (
+            <div key={cat} className="mb-3 last:mb-0">
+              <span className="text-[10px] text-gray-600 uppercase tracking-wider">{cat}</span>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {catTools.map(t => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => toggleTool(t.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      form.tool_ids.includes(t.id)
+                        ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400'
+                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+                    }`}
+                    title={t.description}
+                  >
+                    {t.display_name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {tools.length === 0 && <p className="text-xs text-gray-600">暂无可用工具</p>}
         </div>
 
         {/* Tags */}

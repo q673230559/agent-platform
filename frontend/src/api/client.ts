@@ -1,4 +1,4 @@
-import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, MultiAgentSSEEvent } from '../types'
+import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, MultiAgentSSEEvent, WorkspaceTreeItem } from '../types'
 
 const BASE = '/api'
 
@@ -113,6 +113,9 @@ export const orchestrationsApi = {
   runs: (id: number) => request<OrchestrationRun[]>(`/orchestrations/${id}/runs`),
   runDetail: (runId: number) => request<OrchestrationRun>(`/orchestrations/runs/${runId}`),
   deleteRun: (runId: number) => request<void>(`/orchestrations/runs/${runId}`, { method: 'DELETE' }),
+  workspace: (id: number) => request<WorkspaceTreeItem[]>(`/orchestrations/${id}/workspace`),
+  testScript: (id: number, data: { script: string; requirements: string }) =>
+    request<{ stdout: string; stderr: string; exit_code: number }>(`/orchestrations/${id}/test-script`, { method: 'POST', body: JSON.stringify(data) }),
 }
 
 export function orchestrationStream(
@@ -124,8 +127,10 @@ export function orchestrationStream(
     onToken: (nodeId: number, label: string, token: string) => void
     onToolCall: (nodeId: number, label: string, data: unknown) => void
     onNodeEnd: (nodeId: number, label: string, output: string) => void
+    onNodeSkip: (nodeId: number, label: string) => void
     onNodeError: (nodeId: number, label: string, error: string) => void
     onDone: (result: Record<string, unknown>) => void
+    onStopped: () => void
     onError: (err: string) => void
   },
 ): AbortController {
@@ -171,11 +176,18 @@ export function orchestrationStream(
               case 'node_end':
                 callbacks.onNodeEnd(evt.node_id!, evt.node_label!, evt.output || '')
                 break
+              case 'node_skip':
+                callbacks.onNodeSkip(evt.node_id!, evt.node_label!)
+                break
               case 'node_error':
                 callbacks.onNodeError(evt.node_id!, evt.node_label!, evt.content || '')
                 break
               case 'orchestration_done':
-                callbacks.onDone(evt.result || {})
+                if (evt.failed) {
+                  callbacks.onError('编排执行失败：节点执行出错')
+                } else {
+                  callbacks.onDone(evt.result || {})
+                }
                 break
               case 'error':
                 callbacks.onError(evt.content!)
@@ -186,7 +198,11 @@ export function orchestrationStream(
       }
     }
   }).catch((err) => {
-    if (err.name !== 'AbortError') callbacks.onError(err.message)
+    if (err.name === 'AbortError') {
+      callbacks.onStopped()
+    } else {
+      callbacks.onError(err.message)
+    }
   })
   return controller
 }

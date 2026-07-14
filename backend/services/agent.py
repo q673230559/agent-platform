@@ -31,7 +31,11 @@ async def stream_chat(bot: Bot, provider: ModelProvider, message: str, history: 
     full_response = ""
     tool_calls_log = []
 
-    async for event in agent.astream_events({"messages": messages}, version="v2"):
+    async for event in agent.astream_events(
+        {"messages": messages},
+        config={"recursion_limit": 50},
+        version="v2",
+    ):
         kind = event.get("event", "")
         name = event.get("name", "")
 

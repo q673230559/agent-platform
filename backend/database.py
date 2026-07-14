@@ -60,3 +60,26 @@ async def init_db():
             # Add node_type if missing
             if "node_type" not in orch_col_names:
                 await conn.execute(text("ALTER TABLE orchestration_nodes ADD COLUMN node_type VARCHAR(20) NOT NULL DEFAULT 'agent'"))
+
+        # Add category to builtin_tools
+        tool_cols = await conn.execute(
+            text("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'builtin_tools'")
+        )
+        tool_col_names = {r[0] for r in tool_cols.fetchall()}
+        if "category" not in tool_col_names:
+            await conn.execute(text("ALTER TABLE builtin_tools ADD COLUMN category VARCHAR(50) NOT NULL DEFAULT ''"))
+
+        # Migrate orchestrations: add scheduling columns
+        orch_cols = await conn.execute(
+            text("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'orchestrations'")
+        )
+        orch_col_names_set = {r[0] for r in orch_cols.fetchall()}
+        if orch_col_names_set:
+            for col_name, col_def in [
+                ("cron_expression", "VARCHAR(100) NULL"),
+                ("schedule_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                ("max_retries", "INTEGER NOT NULL DEFAULT 1"),
+                ("recursion_limit", "INTEGER NOT NULL DEFAULT 50"),
+            ]:
+                if col_name not in orch_col_names_set:
+                    await conn.execute(text(f"ALTER TABLE orchestrations ADD COLUMN {col_name} {col_def}"))

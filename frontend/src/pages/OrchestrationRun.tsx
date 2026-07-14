@@ -6,6 +6,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { orchestrationsApi, orchestrationStream } from '../api/client'
+import WorkflowNode from '../components/WorkflowNode'
 import type { Orchestration } from '../types'
 
 interface NodeOutput {
@@ -13,7 +14,7 @@ interface NodeOutput {
   label: string
   content: string
   toolCalls: { name: string; input: unknown }[]
-  status: 'pending' | 'running' | 'done' | 'error'
+  status: 'pending' | 'running' | 'done' | 'error' | 'skipped'
 }
 
 function topoSortNodeIds(flowNodes: Node[], flowEdges: Edge[]): string[] {
@@ -34,35 +35,25 @@ function topoSortNodeIds(flowNodes: Node[], flowEdges: Edge[]): string[] {
   // Add any disconnected nodes
   for (const n of flowNodes) { if (!order.includes(n.id)) order.push(n.id) }
 
-  // Start first, end last, agents in topo order in between
+  // Start first, end nodes last, agents in topo order in between
   const startId = flowNodes.find(n => n.data.node_type === 'start')?.id
-  const endId = flowNodes.find(n => n.data.node_type === 'end')?.id
+  const endIds = flowNodes.filter(n => n.data.node_type === 'end').map(n => n.id)
   const display: string[] = []
   if (startId && order.includes(startId)) { display.push(startId); order.splice(order.indexOf(startId), 1) }
-  if (endId && order.includes(endId)) { order.splice(order.indexOf(endId), 1) }
+  for (const eid of endIds) {
+    if (order.includes(eid)) { order.splice(order.indexOf(eid), 1) }
+  }
   display.push(...order)
-  if (endId) display.push(endId)
+  display.push(...endIds)
   return display
 }
 
-function orchNodeToFlowNode(n: { id: number; label: string; position_x: number; position_y: number }): Node {
+function orchNodeToFlowNode(n: { id: number; node_type?: string; label: string; position_x: number; position_y: number }): Node {
   return {
     id: String(n.id),
-    type: 'default',
+    type: 'workflow',
     position: { x: n.position_x || 0, y: n.position_y || 0 },
-    data: { node_id: n.id, label: n.label || 'Node', status: 'pending' as string },
-    style: {
-      opacity: 0.5,
-      transition: 'all 0.3s',
-      background: '#1f2937',
-      border: '1px solid #4b5563',
-      borderRadius: '10px',
-      color: '#e5e7eb',
-      padding: '10px 16px',
-      fontSize: '13px',
-      fontWeight: 500,
-      minWidth: 140,
-    },
+    data: { node_id: n.id, label: n.label || 'Node', node_type: n.node_type || 'agent', status: 'pending' as string },
   }
 }
 
@@ -117,24 +108,7 @@ export default function OrchestrationRun() {
   const updateNodeStatus = useCallback((nodeId: number, status: string) => {
     setNodes((nds: Node[]) => nds.map((n: Node) => {
       if (n.id !== String(nodeId)) return n
-      const colors: Record<string, string> = {
-        pending: 'opacity: 0.4',
-        running: 'opacity: 1; border-color: rgb(129, 140, 248); border-width: 2px',
-        done: 'opacity: 1; background: rgba(52, 211, 153, 0.12); border-color: rgb(52, 211, 153)',
-        error: 'opacity: 1; background: rgba(239, 68, 68, 0.15); border-color: rgb(239, 68, 68)',
-      }
-      const classes: Record<string, string> = {
-        running: 'animate-pulse-glow',
-        done: '',
-        error: '',
-        pending: '',
-      }
-      return {
-        ...n,
-        data: { ...n.data, status },
-        style: { ...n.style, ...parseStyle(colors[status] || '') },
-        className: classes[status] || '',
-      }
+      return { ...n, data: { ...n.data, status } }
     }))
     setEdges((eds: Edge[]) => eds.map((e: Edge) => {
       const sourceDone = (status === 'done' || status === 'error') && e.source === String(nodeId)
@@ -157,7 +131,6 @@ export default function OrchestrationRun() {
     setNodes((nds: Node[]) => nds.map((n: Node) => ({
       ...n,
       data: { ...n.data, status: 'pending' },
-      style: { opacity: 0.4 },
     })))
     setEdges((eds: Edge[]) => eds.map((e: Edge) => ({ ...e, animated: false, style: { stroke: '#4b5563' } })))
 
@@ -205,6 +178,12 @@ export default function OrchestrationRun() {
               : o
           ))
         },
+        onNodeSkip: (nodeId, _label) => {
+          updateNodeStatus(nodeId, 'skipped')
+          setNodeOutputs((prev) => prev.map((o) =>
+            o.nodeId === nodeId ? { ...o, status: 'skipped' as const, content: '已跳过（上游决策未选中）' } : o
+          ))
+        },
         onNodeError: (nodeId, _label, error) => {
           updateNodeStatus(nodeId, 'error')
           setNodeOutputs((prev) => prev.map((o) =>
@@ -215,21 +194,35 @@ export default function OrchestrationRun() {
         },
         onDone: (_result) => {
           setRunning(false)
-          // Mark pending nodes (end node) as done in output panels
+          // Active end nodes → 工作流结束; others lingering pending → 已跳过
           setNodeOutputs((prev) => prev.map((o) => {
             if (o.status === 'pending') {
               return { ...o, status: 'done' as const, content: '工作流结束' }
             }
             return o
           }))
-          // Update end node on canvas
           setNodes((nds) => nds.map((n) => {
             if (n.data.node_type === 'end') {
-              return {
-                ...n,
-                data: { ...n.data, status: 'done' },
-                style: { ...n.style, ...parseStyle('opacity: 1; background: rgba(52, 211, 153, 0.12); border-color: rgb(52, 211, 153)') },
-              }
+              const isActive = n.data.status !== 'skipped'
+              return { ...n, data: { ...n.data, status: isActive ? 'done' : n.data.status } }
+            }
+            return n
+          }))
+        },
+        onStopped: () => {
+          setRunning(false)
+          setNodeOutputs((prev) => prev.map((o) => {
+            if (o.status === 'running') {
+              return { ...o, status: 'error' as const, content: o.content + '\n\n[已停止]' }
+            }
+            if (o.status === 'pending') {
+              return { ...o, status: 'skipped' as const, content: '[已停止]' }
+            }
+            return o
+          }))
+          setNodes((nds) => nds.map((n) => {
+            if (n.data.status === 'running') {
+              return { ...n, data: { ...n.data, status: 'error' } }
             }
             return n
           }))
@@ -298,6 +291,7 @@ export default function OrchestrationRun() {
             nodesDraggable={false}
             nodesConnectable={false}
             elementsSelectable={false}
+            nodeTypes={{ workflow: WorkflowNode }}
           >
             <Controls className="!bg-gray-800 !border-gray-700 !rounded-lg" showInteractive={false} />
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#374151" />
@@ -309,6 +303,7 @@ export default function OrchestrationRun() {
                 if (status === 'error') return '#ef4444'
                 if (status === 'done') return '#34d399'
                 if (status === 'running') return '#818cf8'
+                if (status === 'skipped') return '#6b7280'
                 return '#374151'
               }}
             />
@@ -331,6 +326,8 @@ export default function OrchestrationRun() {
                     ? 'border-emerald-500/30 bg-emerald-500/5'
                     : out.status === 'error'
                     ? 'border-red-500/30 bg-red-500/5'
+                    : out.status === 'skipped'
+                    ? 'border-gray-700/30 bg-gray-800/10'
                     : 'border-gray-800 bg-gray-800/20'
                 }`}
               >
@@ -338,16 +335,19 @@ export default function OrchestrationRun() {
                   <span className={`text-xs font-medium ${
                     out.status === 'running' ? 'text-indigo-400' :
                     out.status === 'done' ? 'text-emerald-400' :
-                    out.status === 'error' ? 'text-red-400' : 'text-gray-600'
+                    out.status === 'error' ? 'text-red-400' :
+                    out.status === 'skipped' ? 'text-gray-600' : 'text-gray-600'
                   }`}>
                     {out.label}
                   </span>
                   <span className={`text-xs px-1.5 py-0.5 rounded ${
                     out.status === 'running' ? 'bg-indigo-500/20 text-indigo-400' :
                     out.status === 'done' ? 'bg-emerald-500/20 text-emerald-400' :
-                    out.status === 'error' ? 'bg-red-500/20 text-red-400' : 'bg-gray-800 text-gray-600'
+                    out.status === 'error' ? 'bg-red-500/20 text-red-400' :
+                    out.status === 'skipped' ? 'bg-gray-500/20 text-gray-500' :
+                    'bg-gray-800 text-gray-600'
                   }`}>
-                    {out.status === 'pending' ? '等待' : out.status === 'running' ? '执行中' : out.status === 'error' ? '异常' : '完成'}
+                    {out.status === 'pending' ? '等待' : out.status === 'running' ? '执行中' : out.status === 'error' ? '异常' : out.status === 'skipped' ? '已跳过' : '完成'}
                   </span>
                 </div>
 
@@ -415,11 +415,3 @@ export default function OrchestrationRun() {
   )
 }
 
-function parseStyle(styleStr: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  styleStr.split(';').forEach((part) => {
-    const [key, val] = part.split(':').map((s) => s.trim())
-    if (key && val) result[key] = val
-  })
-  return result
-}

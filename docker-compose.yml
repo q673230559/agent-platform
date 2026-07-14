@@ -5,6 +5,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-agent_platform}
+      TZ: Asia/Shanghai
     ports:
       - "13308:3306"
     volumes:
@@ -23,9 +24,10 @@ services:
       context: .
       dockerfile: ./backend/Dockerfile
     environment:
-      DATABASE_URL: mysql+aiomysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-agent_platform}
+      DATABASE_URL: mysql+aiomysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-agent_platform}?charset=utf8mb4
       FERNET_KEY: ${FERNET_KEY}
       WORKSPACE_ROOT: /workspace
+      TZ: Asia/Shanghai
     volumes:
       - ./workspace:/workspace
     ports:

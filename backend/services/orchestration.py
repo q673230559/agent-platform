@@ -2,6 +2,7 @@ import json
 import os
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from typing import AsyncIterator, Any
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
@@ -16,6 +17,21 @@ from backend.services.agent import build_agent
 logger = logging.getLogger("orchestration")
 
 _SENTINEL = object()
+
+
+@dataclass
+class CancelScope:
+    """Cooperative cancellation token for orchestration execution."""
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+    reason: str = ""
+
+    @property
+    def cancelled(self) -> bool:
+        return self.event.is_set()
+
+    def cancel(self, reason: str = "stopped") -> None:
+        self.reason = reason
+        self.event.set()
 
 
 async def _get_provider_for_node(node: OrchestrationNode, db: AsyncSession) -> ModelProvider:
@@ -93,6 +109,8 @@ async def _stream_agent(
     node_outputs: dict[str, str],
     db: AsyncSession,
     queue: asyncio.Queue,
+    cancel_scope: CancelScope,
+    recursion_limit: int = 50,
 ) -> str:
     """Run a single agent with full token streaming. Events go to queue, returns final output."""
     from backend.services.llm_factory import create_llm
@@ -104,6 +122,7 @@ async def _stream_agent(
     temperature = cfg.get("temperature", 0.7)
     tools_list = cfg.get("tools", [])
     agent_system_prompt = cfg.get("system_prompt", "")
+    node_recursion_limit = cfg.get("recursion_limit", recursion_limit)
 
     provider = None
     if provider_id:
@@ -133,9 +152,14 @@ async def _stream_agent(
     node_error = None
     try:
         async for event in agent.astream_events(
-            {"messages": [HumanMessage(content=input_msg)]}, version="v2"
+            {"messages": [HumanMessage(content=input_msg)]},
+            config={"recursion_limit": node_recursion_limit},
+            version="v2",
         ):
             kind = event.get("event", "")
+
+            if cancel_scope.cancelled:
+                break
 
             if kind == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
@@ -167,6 +191,7 @@ async def _stream_agent(
         logger.exception(f"Agent {node.label} failed")
         full_output = f"Error: {e}"
         node_error = str(e)
+        cancel_scope.cancel("failed")
 
     if node_error:
         await queue.put({
@@ -186,33 +211,401 @@ async def _stream_agent(
     return full_output
 
 
+async def run_python_script(script: str, requirements: str, workspace: str) -> tuple[str, str, int]:
+    """Execute Python script in workspace. Returns (stdout, stderr, exit_code)."""
+    import tempfile
+
+    stdout_text = ""
+    stderr_text = ""
+    exit_code = 0
+
+    # Install requirements if specified
+    if requirements and requirements.strip():
+        reqs = [r.strip() for r in requirements.strip().split("\n") if r.strip()]
+        if reqs:
+            for req in reqs:
+                proc = await asyncio.create_subprocess_exec(
+                    "pip", "install", req,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=workspace,
+                )
+                out, err = await asyncio.wait_for(
+                    proc.communicate(), timeout=120,
+                )
+                stdout_text += out.decode("utf-8", errors="replace")
+                if proc.returncode != 0:
+                    stderr_text += err.decode("utf-8", errors="replace") or f"pip install {req} failed"
+                    return stdout_text, stderr_text, proc.returncode
+
+    if not script or not script.strip():
+        return "(empty script)\n", "", 0
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", dir=workspace,
+        delete=False, encoding="utf-8",
+    ) as f:
+        f.write(script)
+        script_path = f.name
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "python", script_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=workspace,
+        )
+        out, err = await proc.communicate()
+        stdout_text += out.decode("utf-8", errors="replace")
+        stderr_text = err.decode("utf-8", errors="replace")
+        exit_code = proc.returncode or 0
+    finally:
+        try:
+            os.unlink(script_path)
+        except OSError:
+            pass
+
+    return stdout_text, stderr_text, exit_code
+
+
+async def _execute_python_script(
+    node: OrchestrationNode,
+    queue: asyncio.Queue,
+    cancel_scope: CancelScope,
+) -> str:
+    """Execute a python_script node streaming events to the queue."""
+    from backend.config import get_workspace
+
+    if cancel_scope.cancelled:
+        await queue.put({
+            "type": "node_skip",
+            "node_id": node.id,
+            "node_label": node.label,
+        })
+        return ""
+
+    cfg = node.config or {}
+    script = cfg.get("script", "")
+    requirements = cfg.get("requirements", "")
+    workspace = get_workspace()
+
+    await queue.put({
+        "type": "node_start",
+        "node_id": node.id,
+        "node_label": node.label,
+    })
+
+    try:
+        stdout_text, stderr_text, exit_code = await run_python_script(script, requirements, workspace)
+
+        if stdout_text:
+            for line in stdout_text.splitlines(keepends=True):
+                await queue.put({
+                    "type": "token", "node_id": node.id,
+                    "node_label": node.label, "content": line,
+                })
+
+        if exit_code != 0:
+            error_msg = stderr_text or f"Script exited with code {exit_code}"
+            raise RuntimeError(error_msg)
+
+    except Exception as e:
+        logger.exception(f"Python script node {node.label} failed")
+        cancel_scope.cancel("failed")
+        await queue.put({
+            "type": "node_error",
+            "node_id": node.id,
+            "node_label": node.label,
+            "content": str(e),
+        })
+        return f"Error: {e}"
+
+    await queue.put({
+        "type": "node_end",
+        "node_id": node.id,
+        "node_label": node.label,
+        "output": stdout_text,
+    })
+
+    return stdout_text
+
+
+async def _execute_decision_script(
+    node: OrchestrationNode,
+    node_outputs: dict[str, str],
+    user_message: str,
+    queue: asyncio.Queue,
+    cancel_scope: CancelScope,
+) -> str:
+    """Execute a Python script that returns the next node label for routing."""
+    from backend.config import get_workspace
+
+    if cancel_scope.cancelled:
+        await queue.put({
+            "type": "node_skip",
+            "node_id": node.id,
+            "node_label": node.label,
+            "reason": "上游节点执行失败",
+        })
+        return ""
+
+    cfg = node.config or {}
+    script = cfg.get("script", "")
+    requirements = cfg.get("requirements", "")
+    workspace = get_workspace()
+
+    await queue.put({
+        "type": "node_start",
+        "node_id": node.id,
+        "node_label": node.label,
+    })
+
+    # Build context variables for the script
+    context_header = "# --- 上下文变量（由系统注入）---\n"
+    context_header += "import json\n"
+    context_header += f"node_outputs = {json.dumps(node_outputs, ensure_ascii=False)}\n"
+    context_header += f"user_message = {json.dumps(user_message, ensure_ascii=False)}\n"
+    context_header += f"upstream_labels = {json.dumps(list(node_outputs.keys()), ensure_ascii=False)}\n"
+    context_header += "# --- 用户脚本 ---\n\n"
+    full_script = context_header + script
+
+    try:
+        stdout_text, stderr_text, exit_code = await run_python_script(full_script, requirements, workspace)
+
+        if stdout_text:
+            for line in stdout_text.splitlines(keepends=True):
+                await queue.put({
+                    "type": "token", "node_id": node.id,
+                    "node_label": node.label, "content": line,
+                })
+
+        if exit_code != 0:
+            error_msg = stderr_text or f"Script exited with code {exit_code}"
+            raise RuntimeError(error_msg)
+
+    except Exception as e:
+        logger.exception(f"Decision script node {node.label} failed")
+        cancel_scope.cancel("failed")
+        await queue.put({
+            "type": "node_error",
+            "node_id": node.id,
+            "node_label": node.label,
+            "content": str(e),
+        })
+        return f"Error: {e}"
+
+    await queue.put({
+        "type": "node_end",
+        "node_id": node.id,
+        "node_label": node.label,
+        "output": stdout_text,
+    })
+
+    return stdout_text
+
+
+def _extract_json_objects(text: str) -> list[str]:
+    """Extract complete, balanced JSON objects from text."""
+    results = []
+    i = 0
+    while i < len(text):
+        if text[i] == '{':
+            depth = 0
+            j = i
+            while j < len(text):
+                if text[j] == '{':
+                    depth += 1
+                elif text[j] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        results.append(text[i:j + 1])
+                        break
+                j += 1
+        i += 1
+    return results
+
+
+def _parse_decision_output(output: str) -> list[str]:
+    """Parse agent output for decision JSON: {'next': 'label'} or {'next': ['a','b']}"""
+    candidates = _extract_json_objects(output)
+    # Also strip markdown code fences before extraction
+    for fence in ('```json', '```'):
+        if fence in output:
+            candidates.extend(_extract_json_objects(
+                output[output.index(fence) + len(fence):].split('```', 1)[0]
+                if '```' in output[output.index(fence) + len(fence):] else ''
+            ))
+    for json_str in candidates:
+        try:
+            parsed = json.loads(json_str)
+            next_val = parsed.get('next')
+            if next_val is None:
+                continue
+            if isinstance(next_val, str):
+                return [next_val]
+            if isinstance(next_val, list):
+                return next_val
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return []
+
+
+def _get_downstream_labels(
+    node: OrchestrationNode,
+    edges: list[OrchestrationEdge],
+    node_map: dict[int, OrchestrationNode],
+) -> list[str]:
+    """Get the labels of all direct downstream nodes."""
+    result: list[str] = []
+    for e in edges:
+        if e.source_node_id == node.id:
+            target = node_map.get(e.target_node_id)
+            if target:
+                result.append(target.label)
+    return result
+
+
+def _get_upstream_labels(
+    node: OrchestrationNode,
+    edges: list[OrchestrationEdge],
+    node_map: dict[int, OrchestrationNode],
+) -> list[str]:
+    """Get the labels of all direct upstream nodes."""
+    result: list[str] = []
+    for e in edges:
+        if e.target_node_id == node.id:
+            source = node_map.get(e.source_node_id)
+            if source:
+                result.append(source.label)
+    return result
+
+
 async def _execute_dag(
     nodes: list[OrchestrationNode],
     edges: list[OrchestrationEdge],
     message: str,
     db: AsyncSession,
+    cancel_scope: CancelScope,
+    recursion_limit: int = 50,
 ) -> AsyncIterator[dict]:
-    # Topo sort with all nodes (start/end as placeholders), only execute agents
-    levels = _topological_levels(nodes, edges)
+    node_map = {n.id: n for n in nodes}
+
+    # Only execute nodes reachable from start nodes
+    start_nodes = [n for n in nodes if n.node_type == 'start']
+    reachable_ids: set[int] = set()
+    bfs_queue = [n.id for n in start_nodes]
+    while bfs_queue:
+        nid = bfs_queue.pop(0)
+        if nid in reachable_ids:
+            continue
+        reachable_ids.add(nid)
+        for e in edges:
+            if e.source_node_id == nid:
+                bfs_queue.append(e.target_node_id)
+
+    # Skip unreachable executable nodes
+    unreachable = [n for n in nodes if n.id not in reachable_ids and n.node_type in ('agent', 'decision_agent', 'python_script', 'decision_script')]
+
+    # Only consider reachable nodes and edges for topology
+    reachable_nodes = [n for n in nodes if n.id in reachable_ids]
+    reachable_edges = [e for e in edges if e.source_node_id in reachable_ids and e.target_node_id in reachable_ids]
+
+    levels = _topological_levels(reachable_nodes, reachable_edges)
     if not levels:
         raise ValueError("DAG has no executable nodes")
-    # Filter: only run agent nodes at each level
-    levels = [[n for n in level if n.node_type not in ('start', 'end')] for level in levels]
+    # Filter: only run executable nodes
+    levels = [[n for n in level if n.node_type in ('agent', 'decision_agent', 'python_script', 'decision_script')] for level in levels]
     levels = [l for l in levels if l]
     if not levels:
-        raise ValueError("DAG has no executable agent nodes")
+        raise ValueError("DAG has no executable nodes")
 
     node_outputs: dict[str, str] = {}
+    active_labels = {n.label for n in nodes}
 
-    for level_idx, level in enumerate(levels):
+    # Emit skip events for unreachable executable nodes
+    for n in unreachable:
+        yield {
+            "type": "node_skip",
+            "node_id": n.id,
+            "node_label": n.label,
+            "reason": "未连接到开始节点",
+        }
+
+    for level in levels:
+        if cancel_scope.cancelled:
+            break
+
         queue: asyncio.Queue = asyncio.Queue()
 
+        # Send skip events for nodes deactivated by upstream decision
+        for n in level:
+            if n.label not in active_labels:
+                await queue.put({
+                    "type": "node_skip",
+                    "node_id": n.id,
+                    "node_label": n.label,
+                    "reason": "被上游决策 Agent 跳过",
+                })
+
+        active_in_level = [n for n in level if n.label in active_labels]
+
         async def run_node(n: OrchestrationNode) -> None:
-            output = await _stream_agent(n, message, node_outputs, db, queue)
+            output: str
+            if n.node_type == 'python_script':
+                output = await _execute_python_script(n, queue, cancel_scope)
+            elif n.node_type == 'decision_script':
+                output = await _execute_decision_script(n, node_outputs, message, queue, cancel_scope)
+            else:
+                output = await _stream_agent(n, message, node_outputs, db, queue, cancel_scope, recursion_limit)
             node_outputs[n.label] = output
+
+            # Decision nodes: parse output and deactivate unselected downstream nodes
+            if n.node_type in ('decision_agent', 'decision_script'):
+                downstream = _get_downstream_labels(n, edges, node_map)
+                selected = _parse_decision_output(output)
+                # If JSON parsing failed, try matching output text against downstream labels
+                if not selected and downstream:
+                    trimmed = output.strip()
+                    # Strategy 1: exact match
+                    for ds in downstream:
+                        if ds.strip() == trimmed:
+                            selected = [ds]
+                            break
+                    # Strategy 2: check last line for exact match (LLMs often put decision on last line)
+                    if not selected:
+                        last_line = trimmed.split('\n')[-1].strip()
+                        for ds in downstream:
+                            if ds.strip() == last_line:
+                                selected = [ds]
+                                break
+                    # Strategy 3: substring containment (pick labels that appear in output)
+                    if not selected:
+                        matches = [ds for ds in downstream if ds.strip() in trimmed]
+                        if len(matches) == 1:
+                            selected = [matches[0]]
+                        elif len(matches) > 1:
+                            # Pick the one that appears last (often the final decision)
+                            selected = [max(matches, key=lambda m: trimmed.rfind(m.strip()))]
+                if selected:
+                    # Deactivate direct unselected downstream nodes
+                    for ds in downstream:
+                        if ds not in selected:
+                            active_labels.discard(ds)
+                    # Recursively deactivate nodes whose ALL upstream nodes are inactive
+                    changed = True
+                    while changed:
+                        changed = False
+                        for check_node in nodes:
+                            if check_node.label not in active_labels:
+                                continue
+                            upstream = _get_upstream_labels(check_node, edges, node_map)
+                            if upstream and all(ul not in active_labels for ul in upstream):
+                                active_labels.discard(check_node.label)
+                                changed = True
+
             await queue.put(_SENTINEL)
 
-        tasks = [asyncio.create_task(run_node(n)) for n in level]
+        tasks = [asyncio.create_task(run_node(n)) for n in active_in_level]
         sentinel_count = 0
         total = len(tasks)
 
@@ -226,9 +619,23 @@ async def _execute_dag(
         # Ensure all tasks completed without exception
         await asyncio.gather(*tasks, return_exceptions=True)
 
+        if cancel_scope.cancelled:
+            break
+
+    # Emit skip events for end nodes on deactivated branches
+    for n in nodes:
+        if n.node_type == 'end' and n.label not in active_labels:
+            yield {
+                "type": "node_skip",
+                "node_id": n.id,
+                "node_label": n.label,
+                "reason": "所有上游节点未执行",
+            }
+
     yield {
         "type": "orchestration_done",
         "result": {"node_outputs": node_outputs},
+        "failed": cancel_scope.cancelled and cancel_scope.reason == "failed",
     }
 
 
@@ -237,6 +644,8 @@ async def _execute_supervisor(
     edges: list[OrchestrationEdge],
     message: str,
     db: AsyncSession,
+    cancel_scope: CancelScope,
+    recursion_limit: int = 50,
 ) -> AsyncIterator[dict]:
     supervisor_bot_id = None  # determined from config — for now use first node as supervisor
     supervisor_node = nodes[0] if nodes else None
@@ -249,6 +658,9 @@ async def _execute_supervisor(
     node_outputs: dict[str, str] = {}
 
     for iteration in range(max_iterations):
+        if cancel_scope.cancelled:
+            break
+
         # Ask supervisor to decide
         provider = await _get_provider_for_node(supervisor_node, db)
 
@@ -265,6 +677,7 @@ async def _execute_supervisor(
 
         from backend.services.llm_factory import create_llm
         cfg = supervisor_node.config or {}
+        supervisor_recursion_limit = cfg.get("recursion_limit", recursion_limit)
         llm = create_llm(provider, cfg.get("model_name", ""), cfg.get("temperature", 0.7))
         agent = create_agent(llm, [], system_prompt=supervisor_prompt_text)
 
@@ -274,7 +687,11 @@ async def _execute_supervisor(
         await queue.put({"type": "node_start", "node_id": supervisor_node.id, "node_label": supervisor_node.label})
 
         full_output = ""
-        async for event in agent.astream_events({"messages": history_messages}, version="v2"):
+        async for event in agent.astream_events(
+            {"messages": history_messages},
+            config={"recursion_limit": supervisor_recursion_limit},
+            version="v2",
+        ):
             kind = event.get("event", "")
             if kind == "on_chat_model_stream":
                 token = event["data"]["chunk"].content
@@ -294,14 +711,15 @@ async def _execute_supervisor(
         # Parse supervisor decision
         next_agent = "FINISH"
         instruction = ""
-        try:
-            if "{" in full_output and "}" in full_output:
-                json_str = full_output[full_output.index("{"):full_output.rindex("}") + 1]
+        for json_str in _extract_json_objects(full_output):
+            try:
                 parsed = json.loads(json_str)
-                next_agent = parsed.get("next", "FINISH")
-                instruction = parsed.get("instruction", "")
-        except (json.JSONDecodeError, IndexError, KeyError, ValueError):
-            next_agent = "FINISH"
+                if 'next' in parsed:
+                    next_agent = parsed.get("next", "FINISH")
+                    instruction = parsed.get("instruction", "")
+                    break
+            except (json.JSONDecodeError, ValueError):
+                continue
 
         if not next_agent or next_agent.upper() == "FINISH":
             break
@@ -314,7 +732,10 @@ async def _execute_supervisor(
             break
 
         worker_queue: asyncio.Queue = asyncio.Queue()
-        output = await _stream_agent(selected, instruction or message, node_outputs, db, worker_queue)
+        if selected.node_type == 'python_script':
+            output = await _execute_python_script(selected, worker_queue, cancel_scope)
+        else:
+            output = await _stream_agent(selected, instruction or message, node_outputs, db, worker_queue, cancel_scope, recursion_limit)
         node_outputs[selected.label] = output
         await worker_queue.put(_SENTINEL)
 
@@ -327,6 +748,7 @@ async def _execute_supervisor(
     yield {
         "type": "orchestration_done",
         "result": {"node_outputs": node_outputs},
+        "failed": cancel_scope.cancelled and cancel_scope.reason == "failed",
     }
 
 
@@ -335,6 +757,8 @@ async def _execute_swarm(
     edges: list[OrchestrationEdge],
     message: str,
     db: AsyncSession,
+    cancel_scope: CancelScope,
+    recursion_limit: int = 50,
 ) -> AsyncIterator[dict]:
     if not nodes:
         raise ValueError("Swarm orchestration has no nodes")
@@ -345,6 +769,9 @@ async def _execute_swarm(
 
     current_node = nodes[0]
     for _ in range(max_rounds):
+        if cancel_scope.cancelled:
+            break
+
         queue: asyncio.Queue = asyncio.Queue()
 
         handoff_instruction = (
@@ -354,7 +781,10 @@ async def _execute_swarm(
         )
         full_msg = f"## Task\n{message}" + handoff_instruction
 
-        output = await _stream_agent(current_node, full_msg, node_outputs, db, queue)
+        if current_node.node_type == 'python_script':
+            output = await _execute_python_script(current_node, queue, cancel_scope)
+        else:
+            output = await _stream_agent(current_node, full_msg, node_outputs, db, queue, cancel_scope, recursion_limit)
         node_outputs[current_node.label] = output
         await queue.put(_SENTINEL)
 
@@ -366,13 +796,14 @@ async def _execute_swarm(
 
         # Check for handoff
         next_label = ""
-        try:
-            if "handoff_to" in output:
-                json_str = output[output.index("{"):output.rindex("}") + 1]
+        for json_str in _extract_json_objects(output):
+            try:
                 parsed = json.loads(json_str)
-                next_label = parsed.get("handoff_to", "")
-        except (json.JSONDecodeError, IndexError, KeyError, ValueError):
-            pass
+                if 'handoff_to' in parsed:
+                    next_label = parsed.get("handoff_to", "")
+                    break
+            except (json.JSONDecodeError, ValueError):
+                continue
 
         if not next_label:
             break
@@ -385,6 +816,7 @@ async def _execute_swarm(
     yield {
         "type": "orchestration_done",
         "result": {"node_outputs": node_outputs},
+        "failed": cancel_scope.cancelled and cancel_scope.reason == "failed",
     }
 
 
@@ -396,6 +828,7 @@ async def execute_orchestration_stream(
     orchestration: Orchestration,
     message: str,
     db: AsyncSession,
+    cancel_scope: CancelScope,
 ) -> AsyncIterator[dict]:
     nodes = list(orchestration.nodes)
     edges = list(orchestration.edges)
@@ -418,14 +851,16 @@ async def execute_orchestration_stream(
         ],
     }
 
+    recursion_limit = orchestration.recursion_limit or 50
+
     if orchestration.orchestration_type == OrchestrationType.DAG:
-        async for event in _execute_dag(nodes, edges, message, db):
+        async for event in _execute_dag(nodes, edges, message, db, cancel_scope, recursion_limit):
             yield event
     elif orchestration.orchestration_type == OrchestrationType.SUPERVISOR:
-        async for event in _execute_supervisor(nodes, edges, message, db):
+        async for event in _execute_supervisor(nodes, edges, message, db, cancel_scope, recursion_limit):
             yield event
     elif orchestration.orchestration_type == OrchestrationType.SWARM:
-        async for event in _execute_swarm(nodes, edges, message, db):
+        async for event in _execute_swarm(nodes, edges, message, db, cancel_scope, recursion_limit):
             yield event
     else:
         raise ValueError(f"Unknown orchestration type: {orchestration.orchestration_type}")
