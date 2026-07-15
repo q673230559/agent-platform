@@ -1,4 +1,4 @@
-import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, MultiAgentSSEEvent, WorkspaceTreeItem } from '../types'
+import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, MultiAgentSSEEvent, WorkspaceTreeItem, DashboardStats } from '../types'
 
 const BASE = '/api'
 
@@ -98,6 +98,11 @@ export function chatStream(
     if (err.name !== 'AbortError') onError(err.message)
   })
   return controller
+}
+
+// Stats
+export const statsApi = {
+  get: () => request<DashboardStats>('/stats'),
 }
 
 // Orchestrations

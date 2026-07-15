@@ -12,11 +12,16 @@ for lib in ("httpcore", "urllib3", "asyncio", "aiomysql"):
     logging.getLogger(lib).setLevel(logging.WARNING)
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from backend.database import init_db
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from backend.database import init_db, get_db
 from backend.routers import providers, bots, tools, orchestrations
 from backend.models.tool import BuiltinTool
+from backend.models.provider import ModelProvider
+from backend.models.bot import Bot
+from backend.models.orchestration import Orchestration, OrchestrationRun
 from backend.services.scheduler import load_all_schedules
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -58,3 +63,17 @@ app.include_router(orchestrations.router, prefix="/api")
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/stats")
+async def stats(db: AsyncSession = Depends(get_db)):
+    prov_count = (await db.execute(select(func.count(ModelProvider.id)))).scalar() or 0
+    bot_count = (await db.execute(select(func.count(Bot.id)))).scalar() or 0
+    orch_count = (await db.execute(select(func.count(Orchestration.id)))).scalar() or 0
+    run_count = (await db.execute(select(func.count(OrchestrationRun.id)))).scalar() or 0
+    return {
+        "providers": prov_count,
+        "bots": bot_count,
+        "orchestrations": orch_count,
+        "orchestration_runs": run_count,
+    }

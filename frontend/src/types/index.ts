@@ -90,6 +90,13 @@ export interface SSEEvent {
   tool_calls?: unknown[]
 }
 
+export interface DashboardStats {
+  providers: number
+  bots: number
+  orchestrations: number
+  orchestration_runs: number
+}
+
 // ── Orchestration ──
 
 export type OrchestrationType = 'supervisor' | 'dag' | 'swarm'
