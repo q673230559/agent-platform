@@ -38,6 +38,8 @@ FERNET_KEY=<你生成的密钥>
 
 ```bash
 docker-compose up -d
+
+docker compose up -d --build
 ```
 
 ### 4. 访问

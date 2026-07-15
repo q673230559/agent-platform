@@ -602,6 +602,10 @@ async def _execute_dag(
                             if upstream and all(ul not in active_labels for ul in upstream):
                                 active_labels.discard(check_node.label)
                                 changed = True
+            else:
+                downstream = _get_downstream_labels(n, edges, node_map)
+                for ds in downstream:
+                    active_labels.add(ds)
 
             await queue.put(_SENTINEL)
 

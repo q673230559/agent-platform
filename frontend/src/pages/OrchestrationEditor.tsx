@@ -201,17 +201,25 @@ export default function OrchestrationEditor() {
   const addNode = (nodeType: string, label: string) => {
     if (nodeType === 'start' && hasStart) return
     if (nodeType === 'end' && hasEnd) return
-    const offset = nodes.length > 0 ? 60 : 0
-    const x = 100 + offset
-    const y = nodeType === 'start' ? 200 : nodeType === 'end' ? 400 : 300
+    const count = nodes.filter(n => n.data.node_type === nodeType).length
+    const x = 100 + count * 220
+    const y = nodeType === 'start' ? 200 : nodeType === 'end' ? 400 : 300 + (count % 3) * 120
     setNodes((nds: Node[]) => [...nds, createFlowNode(nodeType, label, x, y)])
   }
 
   const updateNodeConfig = (field: string, value: unknown) => {
     if (!selectedNode) return
-    const newConfig = { ...(selectedNode.data.config as Record<string, unknown>), [field]: value }
-    setNodes((nds: Node[]) => nds.map((n: Node) => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: newConfig } } : n))
-    setSelectedNode((prev: Node | null) => prev ? { ...prev, data: { ...prev.data, config: newConfig } } : null)
+    const nodeId = selectedNode.id
+    setNodes((nds: Node[]) => nds.map((n: Node) => {
+      if (n.id !== nodeId) return n
+      const newConfig = { ...(n.data.config as Record<string, unknown>), [field]: value }
+      return { ...n, data: { ...n.data, config: newConfig } }
+    }))
+    setSelectedNode((prev: Node | null) => {
+      if (!prev) return null
+      const newConfig = { ...(prev.data.config as Record<string, unknown>), [field]: value }
+      return { ...prev, data: { ...prev.data, config: newConfig } }
+    })
   }
 
   const updateNodeLabel = (value: string) => {
@@ -273,10 +281,21 @@ export default function OrchestrationEditor() {
 
   const toggleTool = (toolName: string) => {
     if (!selectedNode) return
-    const cfg = selectedNode.data.config as Record<string, unknown>
-    const current = (cfg.tools as string[]) || []
-    const next = current.includes(toolName) ? current.filter((t) => t !== toolName) : [...current, toolName]
-    updateNodeConfig('tools', next)
+    const nodeId = selectedNode.id
+    setNodes((nds: Node[]) => nds.map((n: Node) => {
+      if (n.id !== nodeId) return n
+      const cfg = n.data.config as Record<string, unknown>
+      const current = (cfg.tools as string[]) || []
+      const next = current.includes(toolName) ? current.filter((t) => t !== toolName) : [...current, toolName]
+      return { ...n, data: { ...n.data, config: { ...cfg, tools: next } } }
+    }))
+    setSelectedNode((prev: Node | null) => {
+      if (!prev) return null
+      const cfg = prev.data.config as Record<string, unknown>
+      const current = (cfg.tools as string[]) || []
+      const next = current.includes(toolName) ? current.filter((t) => t !== toolName) : [...current, toolName]
+      return { ...prev, data: { ...prev.data, config: { ...cfg, tools: next } } }
+    })
   }
 
   const selCfg = selectedNode ? (selectedNode.data.config as Record<string, unknown>) : {}
