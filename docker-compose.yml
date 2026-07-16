@@ -94,6 +94,19 @@ services:
       retries: 5
     restart: unless-stopped
 
+  sandbox:
+    container_name: agent-platform-sandbox
+    build:
+      context: .
+      dockerfile: ./sandbox/Dockerfile
+    image: agent-sandbox:latest
+    command: "sleep infinity"
+    volumes:
+      - ./workspace:/workspace
+    networks:
+      - agent_network
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -102,9 +115,16 @@ services:
       DATABASE_URL: mysql+aiomysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-agent_platform}?charset=utf8mb4
       FERNET_KEY: ${FERNET_KEY}
       WORKSPACE_ROOT: /workspace
+      HOST_WORKSPACE_ROOT: ${PWD}/workspace
+      SANDBOX_IMAGE: agent-sandbox:latest
+      SANDBOX_NETWORK: agent_network
+      SANDBOX_MEMORY_LIMIT: 512m
+      SANDBOX_CPU_LIMIT: "1.0"
+      SANDBOX_TIMEOUT: "300"
       TZ: Asia/Shanghai
     volumes:
       - ./workspace:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8000:8000"
     networks:
@@ -112,6 +132,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      sandbox:
+        condition: service_started
     restart: unless-stopped
 
   frontend:

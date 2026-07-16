@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from backend.database import get_db, async_session
 from backend.models.orchestration import (
     Orchestration, OrchestrationNode, OrchestrationEdge,
@@ -17,7 +17,7 @@ from backend.schemas.orchestration import (
     OrchestrationCreate, OrchestrationUpdate, OrchestrationOut,
     NodeCreate, NodeOut, EdgeOut,
     OrchestrationExecuteRequest, OrchestrationRunOut, RunEventOut,
-    WorkspaceTreeItem,
+    PaginatedRunListOut, WorkspaceTreeItem,
 )
 from backend.services.orchestration import execute_orchestration_stream, CancelScope
 from backend.services.scheduler import add_schedule, remove_schedule, get_next_run
@@ -318,17 +318,39 @@ async def execute_orchestration(orchestration_id: int, req: OrchestrationExecute
 
 # ── Run History ──
 
-@router.get("/{orchestration_id}/runs", response_model=list[OrchestrationRunOut])
-async def list_runs(orchestration_id: int, db: AsyncSession = Depends(get_db)):
+@router.get("/{orchestration_id}/runs", response_model=PaginatedRunListOut)
+async def list_runs(
+    orchestration_id: int,
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
     orch = await db.get(Orchestration, orchestration_id)
     if not orch:
         raise HTTPException(404, "Orchestration not found")
+
+    base_query = select(OrchestrationRun).where(OrchestrationRun.orchestration_id == orchestration_id)
+
+    total_result = await db.execute(
+        select(func.count()).select_from(OrchestrationRun).where(OrchestrationRun.orchestration_id == orchestration_id)
+    )
+    total = total_result.scalar() or 0
+
+    offset = (page - 1) * page_size
     result = await db.execute(
-        select(OrchestrationRun).where(OrchestrationRun.orchestration_id == orchestration_id).order_by(
-            OrchestrationRun.created_at.desc())
+        base_query.order_by(OrchestrationRun.created_at.desc()).offset(offset).limit(page_size)
     )
     runs = result.unique().scalars().all()
-    return [_run_to_out(r) for r in runs]
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+
+    return PaginatedRunListOut(
+        items=[_run_to_out(r) for r in runs],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @router.get("/runs/{run_id}", response_model=OrchestrationRunOut)

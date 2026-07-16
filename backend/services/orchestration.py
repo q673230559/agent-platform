@@ -212,33 +212,25 @@ async def _stream_agent(
 
 
 async def run_python_script(script: str, requirements: str, workspace: str) -> tuple[str, str, int]:
-    """Execute Python script in workspace. Returns (stdout, stderr, exit_code)."""
+    """Execute Python script in sandbox container. Returns (stdout, stderr, exit_code)."""
     import tempfile
 
-    stdout_text = ""
-    stderr_text = ""
-    exit_code = 0
+    from backend.sandbox.executor import get_executor
 
-    # Install requirements if specified
+    executor = get_executor()
+
+    # Build a single shell command: install requirements then run script
+    cmd_parts = []
     if requirements and requirements.strip():
-        reqs = [r.strip() for r in requirements.strip().split("\n") if r.strip()]
-        if reqs:
-            for req in reqs:
-                proc = await asyncio.create_subprocess_exec(
-                    "pip", "install", req,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=workspace,
-                )
-                out, err = await asyncio.wait_for(
-                    proc.communicate(), timeout=120,
-                )
-                stdout_text += out.decode("utf-8", errors="replace")
-                if proc.returncode != 0:
-                    stderr_text += err.decode("utf-8", errors="replace") or f"pip install {req} failed"
-                    return stdout_text, stderr_text, proc.returncode
+        for req in requirements.strip().split("\n"):
+            req = req.strip()
+            if req:
+                cmd_parts.append(f"pip install {req}")
 
     if not script or not script.strip():
+        if cmd_parts:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, executor.execute, " && ".join(cmd_parts), 120, workspace)
         return "(empty script)\n", "", 0
 
     with tempfile.NamedTemporaryFile(
@@ -249,23 +241,18 @@ async def run_python_script(script: str, requirements: str, workspace: str) -> t
         script_path = f.name
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "python", script_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=workspace,
+        cmd_parts.append(f"python {script_path}")
+        full_cmd = " && ".join(cmd_parts)
+        loop = asyncio.get_running_loop()
+        stdout, stderr, exit_code = await loop.run_in_executor(
+            None, executor.execute, full_cmd, 120, workspace,
         )
-        out, err = await proc.communicate()
-        stdout_text += out.decode("utf-8", errors="replace")
-        stderr_text = err.decode("utf-8", errors="replace")
-        exit_code = proc.returncode or 0
+        return stdout, stderr, exit_code
     finally:
         try:
             os.unlink(script_path)
         except OSError:
             pass
-
-    return stdout_text, stderr_text, exit_code
 
 
 async def _execute_python_script(

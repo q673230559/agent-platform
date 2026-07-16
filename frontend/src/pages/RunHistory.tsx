@@ -9,17 +9,29 @@ export default function RunHistory() {
   const [orch, setOrch] = useState<Orchestration | null>(null)
   const [runs, setRuns] = useState<OrchestrationRun[]>([])
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const pageSize = 20
+
+  const loadRuns = (p: number) => {
+    if (!id) return
+    setLoading(true)
+    orchestrationsApi.runs(Number(id), p, pageSize)
+      .then((data) => {
+        setRuns(data.items)
+        setTotal(data.total)
+        setTotalPages(data.total_pages)
+        setPage(data.page)
+      })
+      .catch(() => navigate('/orchestrations'))
+      .finally(() => setLoading(false))
+  }
 
   useEffect(() => {
     if (!id) return
-    Promise.all([
-      orchestrationsApi.get(Number(id)),
-      orchestrationsApi.runs(Number(id)),
-    ]).then(([o, r]) => {
-      setOrch(o)
-      setRuns(r)
-    }).catch(() => navigate('/orchestrations'))
-      .finally(() => setLoading(false))
+    orchestrationsApi.get(Number(id)).then(setOrch).catch(() => navigate('/orchestrations'))
+    loadRuns(1)
   }, [id, navigate])
 
   const handleDelete = async (e: React.MouseEvent, runId: number) => {
@@ -28,12 +40,65 @@ export default function RunHistory() {
     try {
       await orchestrationsApi.deleteRun(runId)
       setRuns((prev) => prev.filter((r) => r.id !== runId))
-    } catch (err) {
+      setTotal((prev) => prev - 1)
+    } catch {
       alert('删除失败')
     }
   }
 
-  if (loading) {
+  const renderPagination = () => {
+    if (totalPages <= 1) return null
+    const pages: number[] = []
+    const start = Math.max(1, page - 2)
+    const end = Math.min(totalPages, page + 2)
+    for (let i = start; i <= end; i++) pages.push(i)
+
+    return (
+      <div className="flex items-center justify-center gap-2 mt-6">
+        <button
+          onClick={() => loadRuns(page - 1)}
+          disabled={page <= 1}
+          className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          上一页
+        </button>
+        {start > 1 && (
+          <>
+            <button onClick={() => loadRuns(1)} className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:bg-gray-700 transition-colors">1</button>
+            {start > 2 && <span className="text-gray-600 text-sm">...</span>}
+          </>
+        )}
+        {pages.map((p) => (
+          <button
+            key={p}
+            onClick={() => loadRuns(p)}
+            className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+              p === page
+                ? 'bg-indigo-600 text-white border border-indigo-500'
+                : 'bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700'
+            }`}
+          >
+            {p}
+          </button>
+        ))}
+        {end < totalPages && (
+          <>
+            {end < totalPages - 1 && <span className="text-gray-600 text-sm">...</span>}
+            <button onClick={() => loadRuns(totalPages)} className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:bg-gray-700 transition-colors">{totalPages}</button>
+          </>
+        )}
+        <button
+          onClick={() => loadRuns(page + 1)}
+          disabled={page >= totalPages}
+          className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          下一页
+        </button>
+      </div>
+    )
+  }
+
+  if (loading && runs.length === 0) {
     return (
       <div className="p-8">
         <div className="animate-pulse space-y-3">
@@ -52,7 +117,7 @@ export default function RunHistory() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold text-white">{orch?.name || '编排'} · 运行历史</h2>
-          <p className="text-gray-500 mt-1 text-sm">共 {runs.length} 次运行</p>
+          <p className="text-gray-500 mt-1 text-sm">共 {total} 次运行</p>
         </div>
       </div>
 
@@ -109,6 +174,8 @@ export default function RunHistory() {
           ))}
         </div>
       )}
+
+      {renderPagination()}
     </div>
   )
 }

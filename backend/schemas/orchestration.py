@@ -115,6 +115,14 @@ class WorkspaceTreeItem(BaseModel):
 
 # ── Execution ──
 
+class PaginatedRunListOut(BaseModel):
+    items: list["OrchestrationRunOut"]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 class OrchestrationExecuteRequest(BaseModel):
     message: str = Field(..., min_length=1)
     conversation_id: int | None = None

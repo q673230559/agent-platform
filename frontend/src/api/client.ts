@@ -1,4 +1,4 @@
-import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, MultiAgentSSEEvent, WorkspaceTreeItem, DashboardStats } from '../types'
+import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, PaginatedRunList, MultiAgentSSEEvent, WorkspaceTreeItem, DashboardStats } from '../types'
 
 const BASE = '/api'
 
@@ -115,7 +115,7 @@ export const orchestrationsApi = {
     request<Orchestration>(`/orchestrations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: number) =>
     request<void>(`/orchestrations/${id}`, { method: 'DELETE' }),
-  runs: (id: number) => request<OrchestrationRun[]>(`/orchestrations/${id}/runs`),
+  runs: (id: number, page = 1, pageSize = 20) => request<PaginatedRunList>(`/orchestrations/${id}/runs?page=${page}&page_size=${pageSize}`),
   runDetail: (runId: number) => request<OrchestrationRun>(`/orchestrations/runs/${runId}`),
   deleteRun: (runId: number) => request<void>(`/orchestrations/runs/${runId}`, { method: 'DELETE' }),
   workspace: (id: number) => request<WorkspaceTreeItem[]>(`/orchestrations/${id}/workspace`),

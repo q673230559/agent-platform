@@ -15,3 +15,4 @@ markdownify>=0.14.0
 apscheduler>=3.10.0
 croniter>=2.0.0
 zhdate>=0.1.0
+docker>=7.0.0

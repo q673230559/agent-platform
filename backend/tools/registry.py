@@ -11,6 +11,7 @@ from backend.tools.builtin import (
     poetry_get,
     poetry_authors,
     get_current_time,
+    bash,
 )
 
 registry: dict[str, object] = {
@@ -26,4 +27,5 @@ registry: dict[str, object] = {
     "poetry_get": poetry_get,
     "poetry_authors": poetry_authors,
     "get_current_time": get_current_time,
+    "bash": bash,
 }

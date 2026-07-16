@@ -188,6 +188,14 @@ export interface RunEvent {
   created_at: string
 }
 
+export interface PaginatedRunList {
+  items: OrchestrationRun[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
 export interface WorkspaceTreeItem {
   name: string
   path: string

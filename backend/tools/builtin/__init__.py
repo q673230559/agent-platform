@@ -7,3 +7,4 @@ from backend.tools.builtin.grep_files import grep_files
 from backend.tools.builtin.web_fetch import web_fetch
 from backend.tools.builtin.poetry import poetry_search, poetry_random, poetry_get, poetry_authors
 from backend.tools.builtin.time_tool import get_current_time
+from backend.tools.builtin.bash import bash

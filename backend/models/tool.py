@@ -96,6 +96,12 @@ class BuiltinTool(Base):
                         description="Unified time tool: current time, weekday, solar terms, countdown, timezone conversion, lunar calendar, Chinese holidays",
                         category="时间工具",
                     ),
+                    BuiltinTool(
+                        name="bash",
+                        display_name="Bash",
+                        description="在 workspace 中执行本地 shell 命令，返回标准输出和错误输出",
+                        category="命令执行",
+                    ),
                 ]
                 db.add_all(tools)
                 await db.commit()
