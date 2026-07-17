@@ -50,6 +50,7 @@ class OrchestrationNode(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     orchestration_id = Column(Integer, ForeignKey("orchestrations.id", ondelete="CASCADE"), nullable=False)
     node_type = Column(String(20), default="agent")  # 'start' | 'end' | 'agent' | 'decision_agent' | 'python_script'
+    node_key = Column(String(50), default="")
     label = Column(String(100), default="")
     position_x = Column(Integer, default=0)
     position_y = Column(Integer, default=0)

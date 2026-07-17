@@ -6,16 +6,18 @@ from backend.models.orchestration import OrchestrationType
 # ── Node schemas ──
 
 class NodeCreate(BaseModel):
-    node_type: str = "agent"  # 'start' | 'end' | 'agent' | 'decision_agent' | 'python_script' | 'decision_script'
+    node_type: str = "agent"
+    node_key: str = ""
     label: str = ""
     position_x: int = 0
     position_y: int = 0
-    config: dict = {}  # agent: {...}; python_script: {script, requirements}; start/end: {}
+    config: dict = {}
     temp_id: str = ""
 
 
 class NodeUpdate(BaseModel):
     node_type: str | None = None
+    node_key: str | None = None
     label: str | None = None
     position_x: int | None = None
     position_y: int | None = None
@@ -25,6 +27,7 @@ class NodeUpdate(BaseModel):
 class NodeOut(BaseModel):
     id: int
     node_type: str = "agent"
+    node_key: str = ""
     label: str
     position_x: int
     position_y: int

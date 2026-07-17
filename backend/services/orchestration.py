@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -43,16 +44,17 @@ async def _get_provider_for_node(node: OrchestrationNode, db: AsyncSession) -> M
 
 def _build_node_system_prompt(node: OrchestrationNode, node_outputs: dict[str, str],
                               agent_system_prompt: str = "") -> str:
-    system_prompt = agent_system_prompt
+    system_prompt = resolve_template_vars(agent_system_prompt, node_outputs)
     config = node.config or {}
 
     if config.get("system_prompt_prefix"):
-        system_prompt = config["system_prompt_prefix"] + "\n\n" + system_prompt
+        prefix = resolve_template_vars(config["system_prompt_prefix"], node_outputs)
+        system_prompt = prefix + "\n\n" + system_prompt
 
     if node_outputs:
         ctx = ""
-        for label, output in node_outputs.items():
-            ctx += f"\n### Output from '{label}':\n{output[:2000]}\n"
+        for nk, output in node_outputs.items():
+            ctx += f"\n### Output from '{nk}':\n{output[:2000]}\n"
         if ctx:
             return f"{system_prompt}\n\n## Context from previous agents:{ctx}"
 
@@ -136,11 +138,12 @@ async def _stream_agent(
     system_prompt = _build_node_system_prompt(node, node_outputs, agent_system_prompt)
     agent = create_agent(llm, tool_fns, system_prompt=system_prompt)
 
-    input_msg = f"## Task\n{user_input}"
+    resolved_input = resolve_template_vars(user_input, node_outputs)
+    input_msg = f"## Task\n{resolved_input}"
     if node_outputs:
         input_msg += "\n\n## Previous agent outputs"
-        for label, output in node_outputs.items():
-            input_msg += f"\n### Output from '{label}':\n{output[:2000]}\n"
+        for nk, output in node_outputs.items():
+            input_msg += f"\n### Output from '{nk}':\n{output[:2000]}\n"
 
     await queue.put({
         "type": "node_start",
@@ -257,6 +260,7 @@ async def run_python_script(script: str, requirements: str, workspace: str) -> t
 
 async def _execute_python_script(
     node: OrchestrationNode,
+    node_outputs: dict[str, str],
     queue: asyncio.Queue,
     cancel_scope: CancelScope,
 ) -> str:
@@ -272,9 +276,18 @@ async def _execute_python_script(
         return ""
 
     cfg = node.config or {}
-    script = cfg.get("script", "")
+    raw_script = cfg.get("script", "")
+    script = resolve_template_vars(raw_script, node_outputs)
     requirements = cfg.get("requirements", "")
     workspace = get_workspace()
+
+    # Build context variables for the script
+    context_header = "# --- 上下文变量（由系统注入）---\n"
+    context_header += "import json\n"
+    context_header += f"node_outputs = {json.dumps(node_outputs, ensure_ascii=False)}\n"
+    context_header += f"upstream_keys = {json.dumps(list(node_outputs.keys()), ensure_ascii=False)}\n"
+    context_header += "# --- 用户脚本 ---\n\n"
+    full_script = context_header + script
 
     await queue.put({
         "type": "node_start",
@@ -283,7 +296,7 @@ async def _execute_python_script(
     })
 
     try:
-        stdout_text, stderr_text, exit_code = await run_python_script(script, requirements, workspace)
+        stdout_text, stderr_text, exit_code = await run_python_script(full_script, requirements, workspace)
 
         if stdout_text:
             for line in stdout_text.splitlines(keepends=True):
@@ -337,7 +350,8 @@ async def _execute_decision_script(
         return ""
 
     cfg = node.config or {}
-    script = cfg.get("script", "")
+    raw_script = cfg.get("script", "")
+    script = resolve_template_vars(raw_script, node_outputs)
     requirements = cfg.get("requirements", "")
     workspace = get_workspace()
 
@@ -410,6 +424,110 @@ def _extract_json_objects(text: str) -> list[str]:
                 j += 1
         i += 1
     return results
+
+
+def _try_parse_json(text: str) -> dict | None:
+    """Attempt to parse text as a JSON object. Returns dict or None."""
+    stripped = text.strip()
+    try:
+        result = json.loads(stripped)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    candidates = _extract_json_objects(text)
+    for json_str in reversed(candidates):
+        try:
+            result = json.loads(json_str)
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            continue
+
+    return None
+
+
+def _get_nested(d: dict, path: str) -> object:
+    """Access nested dict using dot notation. Returns None if any key is missing."""
+    keys = path.split(".")
+    current: object = d
+    for key in keys:
+        if isinstance(current, dict) and key in current:
+            current = current[key]
+        else:
+            return None
+    return current
+
+
+def _stringify(value: object) -> str:
+    """Convert a resolved value to its string representation."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if value is None:
+        return "null"
+    return json.dumps(value, ensure_ascii=False)
+
+
+TEMPLATE_RE = re.compile(r'\{\{(.+?)\}\}')
+
+
+def resolve_template_vars(text: str, node_outputs: dict[str, str]) -> str:
+    """Resolve {{...}} template variables using upstream node JSON outputs.
+
+    Supported syntax:
+      {{node_key.field.path}}  — access a specific node's JSON field (dot nesting)
+      {{node_key}}              — substitute the full raw output text of a node
+      {{field_name}}            — search all upstream outputs for a matching JSON key
+
+    If a variable cannot be resolved, the original {{...}} text is left unchanged.
+    If multiple upstream nodes share the same field_name, the last one wins.
+    """
+    if not text or '{{' not in text:
+        return text
+
+    # Build lookup structures from node_outputs
+    parsed_outputs: dict[str, dict] = {}  # node_key -> parsed dict
+    flat_map: dict[str, object] = {}       # field_name -> value
+
+    for node_key, raw_text in node_outputs.items():
+        parsed = _try_parse_json(raw_text)
+        if parsed is not None:
+            parsed_outputs[node_key] = parsed
+            for k, v in parsed.items():
+                flat_map[k] = v
+
+    def _replacer(match: re.Match) -> str:
+        expr = match.group(1).strip()
+        if not expr:
+            return match.group(0)
+
+        # {{node_key.field.path}} — explicit node reference with dot notation
+        if '.' in expr:
+            dot_index = expr.index('.')
+            nk = expr[:dot_index]
+            field_path = expr[dot_index + 1:]
+            if nk in parsed_outputs:
+                val = _get_nested(parsed_outputs[nk], field_path)
+                if val is not None:
+                    return _stringify(val)
+            return match.group(0)
+
+        # {{node_key}} — full raw output of a node
+        if expr in node_outputs:
+            return node_outputs[expr]
+
+        # {{field_name}} — search all upstream JSON keys
+        if expr in flat_map:
+            return _stringify(flat_map[expr])
+
+        return match.group(0)
+
+    return TEMPLATE_RE.sub(_replacer, text)
 
 
 def _parse_decision_output(output: str) -> list[str]:
@@ -507,6 +625,17 @@ async def _execute_dag(
         raise ValueError("DAG has no executable nodes")
 
     node_outputs: dict[str, str] = {}
+    # 把用户输入注册为开始节点输出 + 全局别名，并发出 node_end 事件以便持久化和前端展示
+    for n in nodes:
+        if n.node_type == 'start':
+            node_outputs[n.node_key or n.label] = message
+            yield {
+                "type": "node_end",
+                "node_id": n.id,
+                "node_label": n.label,
+                "output": message,
+            }
+    node_outputs["user_prompt"] = message
     active_labels = {n.label for n in nodes}
 
     # Emit skip events for unreachable executable nodes
@@ -539,12 +668,12 @@ async def _execute_dag(
         async def run_node(n: OrchestrationNode) -> None:
             output: str
             if n.node_type == 'python_script':
-                output = await _execute_python_script(n, queue, cancel_scope)
+                output = await _execute_python_script(n, node_outputs, queue, cancel_scope)
             elif n.node_type == 'decision_script':
                 output = await _execute_decision_script(n, node_outputs, message, queue, cancel_scope)
             else:
                 output = await _stream_agent(n, message, node_outputs, db, queue, cancel_scope, recursion_limit)
-            node_outputs[n.label] = output
+            node_outputs[n.node_key or n.label] = output
 
             # Decision nodes: parse output and deactivate unselected downstream nodes
             if n.node_type in ('decision_agent', 'decision_script'):
@@ -647,6 +776,7 @@ async def _execute_supervisor(
 
     max_iterations = 10
     node_outputs: dict[str, str] = {}
+    node_outputs["user_prompt"] = message
 
     for iteration in range(max_iterations):
         if cancel_scope.cancelled:
@@ -690,7 +820,7 @@ async def _execute_supervisor(
                     full_output += token
                     await queue.put({"type": "token", "node_id": supervisor_node.id, "node_label": supervisor_node.label, "content": token})
 
-        node_outputs[supervisor_node.label] = full_output
+        node_outputs[supervisor_node.node_key or supervisor_node.label] = full_output
         await queue.put({"type": "node_end", "node_id": supervisor_node.id, "node_label": supervisor_node.label, "output": full_output})
 
         while True:
@@ -724,10 +854,10 @@ async def _execute_supervisor(
 
         worker_queue: asyncio.Queue = asyncio.Queue()
         if selected.node_type == 'python_script':
-            output = await _execute_python_script(selected, worker_queue, cancel_scope)
+            output = await _execute_python_script(selected, node_outputs, worker_queue, cancel_scope)
         else:
             output = await _stream_agent(selected, instruction or message, node_outputs, db, worker_queue, cancel_scope, recursion_limit)
-        node_outputs[selected.label] = output
+        node_outputs[selected.node_key or selected.label] = output
         await worker_queue.put(_SENTINEL)
 
         while True:
@@ -757,6 +887,7 @@ async def _execute_swarm(
     all_labels = [n.label for n in nodes]
     max_rounds = 20
     node_outputs: dict[str, str] = {}
+    node_outputs["user_prompt"] = message
 
     current_node = nodes[0]
     for _ in range(max_rounds):
@@ -773,10 +904,10 @@ async def _execute_swarm(
         full_msg = f"## Task\n{message}" + handoff_instruction
 
         if current_node.node_type == 'python_script':
-            output = await _execute_python_script(current_node, queue, cancel_scope)
+            output = await _execute_python_script(current_node, node_outputs, queue, cancel_scope)
         else:
             output = await _stream_agent(current_node, full_msg, node_outputs, db, queue, cancel_scope, recursion_limit)
-        node_outputs[current_node.label] = output
+        node_outputs[current_node.node_key or current_node.label] = output
         await queue.put(_SENTINEL)
 
         while True:
@@ -837,7 +968,7 @@ async def execute_orchestration_stream(
     yield {
         "type": "orchestration_start",
         "nodes": [
-            {"id": n.id, "label": n.label, "node_type": n.node_type or "agent"}
+            {"id": n.id, "label": n.label, "node_type": n.node_type or "agent", "node_key": n.node_key or "", "config": n.config or {}}
             for n in nodes
         ],
     }

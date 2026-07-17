@@ -104,6 +104,7 @@ export type OrchestrationType = 'supervisor' | 'dag' | 'swarm'
 export interface OrchestrationNodeData {
   id: number
   node_type: string
+  node_key: string
   label: string
   position_x: number
   position_y: number
@@ -139,6 +140,7 @@ export interface Orchestration {
 
 export interface NodeForm {
   node_type: string
+  node_key: string
   label: string
   position_x: number
   position_y: number
@@ -207,7 +209,7 @@ export interface MultiAgentSSEEvent {
   type: 'orchestration_start' | 'node_start' | 'token' | 'tool_call' | 'node_end' | 'node_skip' | 'node_error' | 'orchestration_done' | 'error'
   node_id?: number
   node_label?: string
-  nodes?: { id: number; label: string; node_type: string }[]
+  nodes?: { id: number; label: string; node_type: string; node_key?: string; config?: Record<string, unknown> }[]
   content?: string
   output?: string
   result?: Record<string, unknown>

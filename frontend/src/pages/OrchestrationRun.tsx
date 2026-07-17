@@ -382,6 +382,26 @@ export default function OrchestrationRun() {
 
           {/* Input bar */}
           <div className="p-3 border-t border-gray-800">
+            {(() => {
+              const startNode = orch?.nodes?.find(n => n.node_type === 'start')
+              const raw: string = (startNode?.config?.input_hints_text as string) || (startNode?.config?.input_hints as string[])?.join('\n') || ''
+              const hints = raw.split('\n').filter(h => h.trim())
+              if (hints.length === 0) return null
+              return (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {hints.map((hint, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { if (!running) setMessage(hint) }}
+                      disabled={running}
+                      className="px-2.5 py-1 text-xs bg-gray-800 border border-gray-700 rounded-full text-gray-400 hover:text-white hover:border-indigo-500 transition-colors disabled:opacity-50"
+                    >
+                      {hint}
+                    </button>
+                  ))}
+                </div>
+              )
+            })()}
             <div className="flex gap-2">
               <input
                 value={message}

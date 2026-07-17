@@ -33,6 +33,7 @@ def _node_to_out(node: OrchestrationNode) -> NodeOut:
     return NodeOut(
         id=node.id,
         node_type=node.node_type or "agent",
+        node_key=node.node_key or "",
         label=node.label,
         position_x=node.position_x or 0,
         position_y=node.position_y or 0,
@@ -122,6 +123,7 @@ async def create_orchestration(data: OrchestrationCreate, db: AsyncSession = Dep
         node = OrchestrationNode(
             orchestration_id=orch.id,
             node_type=nc.node_type or "agent",
+            node_key=nc.node_key or "",
             label=nc.label or "",
             position_x=nc.position_x,
             position_y=nc.position_y,
@@ -186,6 +188,7 @@ async def update_orchestration(orchestration_id: int, data: OrchestrationUpdate,
         for nc in data.nodes:
             node = OrchestrationNode(
                 orchestration_id=orch.id,
+                node_key=nc.node_key or "",
                 label=nc.label or "",
                 position_x=nc.position_x,
                 position_y=nc.position_y,

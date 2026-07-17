@@ -78,7 +78,18 @@ const TOOL_COLORS: Record<string, { bg: string; hover: string; border: string; b
   cyan:     { bg: 'bg-cyan-600', hover: 'hover:bg-cyan-500', border: 'border-cyan-500/30', badge: 'bg-cyan-600/20 text-cyan-400 border-cyan-600/30' },
 }
 
-function createFlowNode(nodeType: string, label: string, x: number, y: number): Node {
+function generateNodeKey(nodeType: string, existingKeys: Set<string>): string {
+  const prefixMap: Record<string, string> = {
+    agent: 'agent', decision_agent: 'decision_agent', python_script: 'python',
+    decision_script: 'decision_script', start: 'start', end: 'end',
+  }
+  const prefix = prefixMap[nodeType] || nodeType
+  let i = 1
+  while (existingKeys.has(`${prefix}_${i}`)) i++
+  return `${prefix}_${i}`
+}
+
+function createFlowNode(nodeType: string, label: string, x: number, y: number, existingKeys: Set<string>): Node {
   let config: Record<string, unknown>
   if (nodeType === 'agent' || nodeType === 'decision_agent') {
     config = { provider_id: 0, model_name: '', system_prompt: '', temperature: 0.7, tools: [] }
@@ -87,20 +98,22 @@ function createFlowNode(nodeType: string, label: string, x: number, y: number): 
   } else {
     config = {}
   }
+  const nodeKey = generateNodeKey(nodeType, existingKeys)
+  existingKeys.add(nodeKey)
   return {
     id: String(nextNodeId()),
     type: 'workflow',
     position: { x, y },
-    data: { node_type: nodeType, label, config },
+    data: { node_type: nodeType, node_key: nodeKey, label, config },
   }
 }
 
-function orchNodeToFlowNode(n: { id: number; node_type: string; label: string; position_x: number; position_y: number; config: Record<string, unknown> }): Node {
+function orchNodeToFlowNode(n: { id: number; node_type: string; node_key?: string; label: string; position_x: number; position_y: number; config: Record<string, unknown> }): Node {
   return {
     id: String(n.id),
     type: 'workflow',
     position: { x: n.position_x || 0, y: n.position_y || 0 },
-    data: { node_type: n.node_type || 'agent', label: n.label || 'Node', config: n.config || {} },
+    data: { node_type: n.node_type || 'agent', node_key: n.node_key || '', label: n.label || 'Node', config: n.config || {} },
   }
 }
 
@@ -150,7 +163,7 @@ export default function OrchestrationEditor() {
   const [models, setModels] = useState<string[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
   const [customModel, setCustomModel] = useState(false)
-  const [modalEditField, setModalEditField] = useState<'script' | 'system_prompt' | null>(null)
+  const [modalEditField, setModalEditField] = useState<'script' | 'system_prompt' | 'input_hints' | null>(null)
   const [testRunning, setTestRunning] = useState(false)
   const [testOutput, setTestOutput] = useState('')
 
@@ -201,10 +214,11 @@ export default function OrchestrationEditor() {
   const addNode = (nodeType: string, label: string) => {
     if (nodeType === 'start' && hasStart) return
     if (nodeType === 'end' && hasEnd) return
+    const existingKeys = new Set(nodes.map(n => (n.data.node_key as string) || ''))
     const count = nodes.filter(n => n.data.node_type === nodeType).length
     const x = 100 + count * 220
     const y = nodeType === 'start' ? 200 : nodeType === 'end' ? 400 : 300 + (count % 3) * 120
-    setNodes((nds: Node[]) => [...nds, createFlowNode(nodeType, label, x, y)])
+    setNodes((nds: Node[]) => [...nds, createFlowNode(nodeType, label, x, y, existingKeys)])
   }
 
   const updateNodeConfig = (field: string, value: unknown) => {
@@ -226,6 +240,13 @@ export default function OrchestrationEditor() {
     if (!selectedNode) return
     setNodes((nds: Node[]) => nds.map((n: Node) => n.id === selectedNode.id ? { ...n, data: { ...n.data, label: value } } : n))
     setSelectedNode((prev: Node | null) => prev ? { ...prev, data: { ...prev.data, label: value } } : null)
+  }
+
+  const updateNodeKey = (value: string) => {
+    if (!selectedNode) return
+    const sanitized = value.replace(/[^a-zA-Z0-9_]/g, '')
+    setNodes((nds: Node[]) => nds.map((n: Node) => n.id === selectedNode.id ? { ...n, data: { ...n.data, node_key: sanitized } } : n))
+    setSelectedNode((prev: Node | null) => prev ? { ...prev, data: { ...prev.data, node_key: sanitized } } : null)
   }
 
   const updateEdgeData = (field: string, value: unknown) => {
@@ -257,6 +278,7 @@ export default function OrchestrationEditor() {
       recursion_limit: recursionLimit,
       nodes: nodes.map((n: Node) => ({
         node_type: (n.data.node_type as string) || 'agent',
+        node_key: (n.data.node_key as string) || '',
         label: (n.data.label as string) || 'Node',
         position_x: Math.round(n.position.x), position_y: Math.round(n.position.y),
         config: n.data.config as Record<string, unknown>,
@@ -463,6 +485,13 @@ export default function OrchestrationEditor() {
                     className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500" />
                 </div>
                 <div>
+                  <label className="text-xs text-gray-500 block mb-1">节点 ID (变量引用)</label>
+                  <input value={(selectedNode.data.node_key as string) || ''} onChange={(e) => updateNodeKey(e.target.value)}
+                    placeholder="如 intent_agent"
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm font-mono focus:outline-none focus:border-indigo-500" />
+                  <p className="text-[10px] text-gray-600 mt-0.5">用于模板变量引用：{`{{节点ID.字段}}`}</p>
+                </div>
+                <div>
                   <span className={`text-xs px-2 py-0.5 rounded-full border ${
                     selType === 'start' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-600/30' :
                     selType === 'end' ? 'bg-gray-600/20 text-gray-400 border-gray-600/30' :
@@ -475,7 +504,46 @@ export default function OrchestrationEditor() {
                   </span>
                 </div>
 
-                {selType === 'start' && <p className="text-xs text-gray-500">工作流入口，不执行 Agent</p>}
+                {selType === 'start' && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-gray-500">工作流入口，用户输入将作为下游节点的变量</p>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs text-gray-500">输入提示（每行一个，运行页可点击使用）</label>
+                        <button
+                          onClick={() => setModalEditField('input_hints')}
+                          className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+                          title="全屏编辑"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+                          </svg>
+                          全屏
+                        </button>
+                      </div>
+                      <textarea
+                        value={String(selCfg.input_hints_text || '')}
+                        onChange={(e) => updateNodeConfig('input_hints_text', e.target.value)}
+                        rows={3}
+                        placeholder={"创作今日AI热点文章\n导出本周数据报表"}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div className="bg-gray-800/50 rounded-lg p-2.5 space-y-1.5 border border-gray-700/50">
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider">可用模板变量</p>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <code className="text-xs text-emerald-400 bg-gray-900 px-1.5 py-0.5 rounded font-mono">{`{{user_prompt}}`}</code>
+                          <span className="text-[10px] text-gray-500">用户原始输入（全局别名）</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <code className="text-xs text-emerald-400 bg-gray-900 px-1.5 py-0.5 rounded font-mono">{`{{${(selectedNode.data.node_key as string) || 'start'}}}`}</code>
+                          <span className="text-[10px] text-gray-500">通过节点 ID 引用</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {selType === 'end' && <p className="text-xs text-gray-500">工作流出口，不执行 Agent</p>}
                 {selType === 'python_script' && <p className="text-xs text-gray-500">在工作流 workspace 中执行 Python 脚本</p>}
                 {selType === 'decision_script' && <p className="text-xs text-cyan-400/70">Python 脚本决定下游执行路径，脚本 print 输出的最后一行即为目标节点名称，未选中节点将被跳过</p>}
@@ -731,14 +799,14 @@ export default function OrchestrationEditor() {
         </div>
       </div>
 
-      {/* Full-screen Python Script Editor Modal */}
-      {modalEditField !== null && selectedNode && (isPython || isAgent) && (
+      {/* Full-screen Editor Modal */}
+      {modalEditField !== null && selectedNode && (isPython || isAgent || selType === 'start') && (
         <div className="fixed inset-0 z-50 flex flex-col bg-gray-950">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
             <div className="flex items-center gap-3">
               <span className="text-white text-sm font-semibold">
-                {modalEditField === 'script' ? '编辑 Python 脚本' : '编辑 System Prompt'}
+                {modalEditField === 'script' ? '编辑 Python 脚本' : modalEditField === 'system_prompt' ? '编辑 System Prompt' : '编辑输入提示'}
               </span>
               <span className="text-xs text-gray-500">{(selectedNode.data.label as string) || 'Node'}</span>
             </div>
@@ -771,11 +839,20 @@ export default function OrchestrationEditor() {
 
           {/* Editor body */}
           <div className="flex-1 overflow-hidden">
-            <CodeEditor
-              value={String(modalEditField === 'script' ? (selCfg.script || '') : (selCfg.system_prompt || ''))}
-              onChange={(v) => updateNodeConfig(modalEditField === 'script' ? 'script' : 'system_prompt', v)}
-              placeholder={modalEditField === 'script' ? "# Your Python script\nprint('hello')" : '输入 System Prompt...'}
-            />
+            {modalEditField === 'input_hints' ? (
+              <textarea
+                value={String(selCfg.input_hints_text || '')}
+                onChange={(e) => updateNodeConfig('input_hints_text', e.target.value)}
+                placeholder={"创作今日AI热点文章\n导出本周数据报表"}
+                className="w-full h-full bg-gray-950 text-white text-sm p-6 focus:outline-none resize-none font-mono leading-relaxed"
+              />
+            ) : (
+              <CodeEditor
+                value={String(modalEditField === 'script' ? (selCfg.script || '') : (selCfg.system_prompt || ''))}
+                onChange={(v) => updateNodeConfig(modalEditField === 'script' ? 'script' : 'system_prompt', v)}
+                placeholder={modalEditField === 'script' ? "# Your Python script\nprint('hello')" : '输入 System Prompt...'}
+              />
+            )}
           </div>
 
           {/* Test output panel (script only) */}

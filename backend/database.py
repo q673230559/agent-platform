@@ -60,6 +60,8 @@ async def init_db():
             # Add node_type if missing
             if "node_type" not in orch_col_names:
                 await conn.execute(text("ALTER TABLE orchestration_nodes ADD COLUMN node_type VARCHAR(20) NOT NULL DEFAULT 'agent'"))
+            if "node_key" not in orch_col_names:
+                await conn.execute(text("ALTER TABLE orchestration_nodes ADD COLUMN node_key VARCHAR(50) NOT NULL DEFAULT ''"))
 
         # Add category to builtin_tools
         tool_cols = await conn.execute(
