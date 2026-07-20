@@ -127,7 +127,7 @@ export function orchestrationStream(
   orchestrationId: number,
   message: string,
   callbacks: {
-    onStart: (nodes: { id: number; label: string; node_type: string }[]) => void
+    onStart: (nodes: { id: number; label: string; node_type: string; node_key?: string }[]) => void
     onNodeStart: (nodeId: number, label: string) => void
     onToken: (nodeId: number, label: string, token: string) => void
     onToolCall: (nodeId: number, label: string, data: unknown) => void
@@ -138,12 +138,13 @@ export function orchestrationStream(
     onStopped: () => void
     onError: (err: string) => void
   },
+  previousOutputs?: Record<string, string>,
 ): AbortController {
   const controller = new AbortController()
   fetch(`${BASE}/orchestrations/${orchestrationId}/execute`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, previous_outputs: previousOutputs || {} }),
     signal: controller.signal,
   }).then(async (res) => {
     if (!res.ok) {

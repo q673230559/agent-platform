@@ -129,6 +129,7 @@ class PaginatedRunListOut(BaseModel):
 class OrchestrationExecuteRequest(BaseModel):
     message: str = Field(..., min_length=1)
     conversation_id: int | None = None
+    previous_outputs: dict[str, str] = {}
 
 
 class RunEventOut(BaseModel):

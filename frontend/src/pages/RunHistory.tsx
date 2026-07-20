@@ -131,7 +131,7 @@ export default function RunHistory() {
           {runs.map((run) => (
             <div
               key={run.id}
-              onClick={() => navigate(`/orchestrations/${id}/runs/${run.id}`)}
+              onClick={() => navigate(`/orchestrations/${id}/run?runId=${run.id}`)}
               className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center justify-between cursor-pointer hover:border-gray-700 transition-colors"
             >
               <div className="flex-1 min-w-0">

@@ -592,7 +592,10 @@ async def _execute_dag(
     db: AsyncSession,
     cancel_scope: CancelScope,
     recursion_limit: int = 50,
+    previous_outputs: dict[str, str] | None = None,
 ) -> AsyncIterator[dict]:
+    if previous_outputs is None:
+        previous_outputs = {}
     node_map = {n.id: n for n in nodes}
 
     # Only execute nodes reachable from start nodes
@@ -636,7 +639,9 @@ async def _execute_dag(
                 "output": message,
             }
     node_outputs["user_prompt"] = message
+    node_outputs.update(previous_outputs)
     active_labels = {n.label for n in nodes}
+    print(f"[DAG] previous_outputs received: {list(previous_outputs.keys())}", flush=True)
 
     # Emit skip events for unreachable executable nodes
     for n in unreachable:
@@ -663,7 +668,18 @@ async def _execute_dag(
                     "reason": "被上游决策 Agent 跳过",
                 })
 
-        active_in_level = [n for n in level if n.label in active_labels]
+        # Emit skip events for nodes already completed in previous run (resume mode)
+        for n in level:
+            if n.label in active_labels and (n.node_key or n.label) in previous_outputs:
+                await queue.put({
+                    "type": "node_skip",
+                    "node_id": n.id,
+                    "node_label": n.label,
+                    "reason": "已在先前运行中完成",
+                })
+
+        active_in_level = [n for n in level if n.label in active_labels and (n.node_key or n.label) not in previous_outputs]
+        print(f"[DAG] level nodes: {[(n.label, n.node_key, (n.node_key or n.label) in previous_outputs) for n in level]}, active_in_level: {[n.label for n in active_in_level]}", flush=True)
 
         async def run_node(n: OrchestrationNode) -> None:
             output: str
@@ -766,7 +782,10 @@ async def _execute_supervisor(
     db: AsyncSession,
     cancel_scope: CancelScope,
     recursion_limit: int = 50,
+    previous_outputs: dict[str, str] | None = None,
 ) -> AsyncIterator[dict]:
+    if previous_outputs is None:
+        previous_outputs = {}
     supervisor_bot_id = None  # determined from config — for now use first node as supervisor
     supervisor_node = nodes[0] if nodes else None
     worker_nodes = nodes[1:] if len(nodes) > 1 else []
@@ -880,7 +899,10 @@ async def _execute_swarm(
     db: AsyncSession,
     cancel_scope: CancelScope,
     recursion_limit: int = 50,
+    previous_outputs: dict[str, str] | None = None,
 ) -> AsyncIterator[dict]:
+    if previous_outputs is None:
+        previous_outputs = {}
     if not nodes:
         raise ValueError("Swarm orchestration has no nodes")
 
@@ -951,7 +973,11 @@ async def execute_orchestration_stream(
     message: str,
     db: AsyncSession,
     cancel_scope: CancelScope,
+    previous_outputs: dict[str, str] | None = None,
 ) -> AsyncIterator[dict]:
+    if previous_outputs is None:
+        previous_outputs = {}
+
     nodes = list(orchestration.nodes)
     edges = list(orchestration.edges)
 
@@ -976,13 +1002,13 @@ async def execute_orchestration_stream(
     recursion_limit = orchestration.recursion_limit or 50
 
     if orchestration.orchestration_type == OrchestrationType.DAG:
-        async for event in _execute_dag(nodes, edges, message, db, cancel_scope, recursion_limit):
+        async for event in _execute_dag(nodes, edges, message, db, cancel_scope, recursion_limit, previous_outputs):
             yield event
     elif orchestration.orchestration_type == OrchestrationType.SUPERVISOR:
-        async for event in _execute_supervisor(nodes, edges, message, db, cancel_scope, recursion_limit):
+        async for event in _execute_supervisor(nodes, edges, message, db, cancel_scope, recursion_limit, previous_outputs):
             yield event
     elif orchestration.orchestration_type == OrchestrationType.SWARM:
-        async for event in _execute_swarm(nodes, edges, message, db, cancel_scope, recursion_limit):
+        async for event in _execute_swarm(nodes, edges, message, db, cancel_scope, recursion_limit, previous_outputs):
             yield event
     else:
         raise ValueError(f"Unknown orchestration type: {orchestration.orchestration_type}")

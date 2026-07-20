@@ -264,7 +264,7 @@ async def execute_orchestration(orchestration_id: int, req: OrchestrationExecute
 
         try:
             async for event in execute_orchestration_stream(
-                orch, req.message, db, cancel_scope,
+                orch, req.message, db, cancel_scope, req.previous_outputs,
             ):
                 if await request.is_disconnected():
                     cancel_scope.cancel("stopped")
