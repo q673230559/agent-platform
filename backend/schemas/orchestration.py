@@ -154,3 +154,43 @@ class OrchestrationRunOut(BaseModel):
     completed_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+# ── Import / Export ──
+
+class ImportNode(BaseModel):
+    temp_id: str = ""
+    node_type: str = "agent"
+    node_key: str = ""
+    label: str = ""
+    position_x: int = 0
+    position_y: int = 0
+    config: dict = {}
+
+
+class ImportEdge(BaseModel):
+    source_temp_id: str = ""
+    target_temp_id: str = ""
+    condition: str = ""
+    label: str = ""
+    is_default: bool = False
+
+
+class ImportOrchestration(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str = ""
+    orchestration_type: OrchestrationType = OrchestrationType.DAG
+    config: dict = {}
+    is_active: bool = True
+    cron_expression: str | None = None
+    schedule_enabled: bool = False
+    max_retries: int = 1
+    recursion_limit: int = 50
+    nodes: list[ImportNode] = []
+    edges: list[ImportEdge] = []
+
+
+class ImportPayload(BaseModel):
+    version: int = 1
+    exported_at: str | None = None
+    orchestration: ImportOrchestration

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ReactFlow, Controls, Background, MiniMap, useNodesState, useEdgesState,
@@ -9,7 +9,7 @@ import { orchestrationsApi, providersApi, toolsApi } from '../api/client'
 import DirectoryTree from '../components/DirectoryTree'
 import CodeEditor from '../components/CodeEditor'
 import WorkflowNode from '../components/WorkflowNode'
-import type { Orchestration, Provider, Tool, OrchestrationForm, OrchestrationType } from '../types'
+import type { Orchestration, Provider, Tool, OrchestrationForm, OrchestrationType, ImportPayload } from '../types'
 
 function fetchProviderModels(providerId: number): Promise<string[]> {
   return providersApi.models(providerId).then(r => r.models).catch(() => [])
@@ -166,6 +166,8 @@ export default function OrchestrationEditor() {
   const [modalEditField, setModalEditField] = useState<'script' | 'system_prompt' | 'input_hints' | null>(null)
   const [testRunning, setTestRunning] = useState(false)
   const [testOutput, setTestOutput] = useState('')
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -301,6 +303,90 @@ export default function OrchestrationEditor() {
     finally { setSaving(false) }
   }
 
+  const handleExport = async () => {
+    if (isEdit && id) {
+      try {
+        await orchestrationsApi.export(Number(id), name)
+      } catch (e: unknown) {
+        alert(e instanceof Error ? e.message : 'Export failed')
+      }
+    } else {
+      // Build export JSON from current editor state
+      const exportNodes = nodes.map((n: Node) => ({
+        temp_id: (n.data.node_key as string) || (n.data.label as string) || n.id,
+        node_type: (n.data.node_type as string) || 'agent',
+        node_key: (n.data.node_key as string) || '',
+        label: (n.data.label as string) || '',
+        position_x: Math.round(n.position.x),
+        position_y: Math.round(n.position.y),
+        config: n.data.config as Record<string, unknown>,
+      }))
+      const exportEdges = edges.map((e: Edge) => {
+        const srcNode = nodes.find(n => n.id === e.source)
+        const tgtNode = nodes.find(n => n.id === e.target)
+        return {
+          source_temp_id: (srcNode?.data.node_key as string) || (srcNode?.data.label as string) || e.source,
+          target_temp_id: (tgtNode?.data.node_key as string) || (tgtNode?.data.label as string) || e.target,
+          condition: (e.data?.condition as string) || '',
+          label: (e.label as string) || '',
+          is_default: (e.data?.is_default as boolean) || false,
+        }
+      })
+      const payload: ImportPayload = {
+        version: 1,
+        exported_at: new Date().toISOString(),
+        orchestration: {
+          name: name.trim() || '未命名编排',
+          description,
+          orchestration_type: orchType,
+          config,
+          is_active: isActive,
+          cron_expression: cronExpression || null,
+          schedule_enabled: scheduleEnabled,
+          max_retries: maxRetries,
+          recursion_limit: recursionLimit,
+          nodes: exportNodes,
+          edges: exportEdges,
+        },
+      }
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${name || '编排'}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true)
+    try {
+      const text = await file.text()
+      const data: ImportPayload = JSON.parse(text)
+      if (!data.version || !data.orchestration) {
+        throw new Error('无效的导入文件格式')
+      }
+      const result = await orchestrationsApi.import(data)
+      navigate(`/orchestrations/${result.id}/edit`)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Import failed')
+    } finally {
+      setImporting(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
   const toggleTool = (toolName: string) => {
     if (!selectedNode) return
     const nodeId = selectedNode.id
@@ -367,10 +453,29 @@ export default function OrchestrationEditor() {
           {typeOptions.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
         <div className="flex-1" />
+        <button
+          onClick={handleImportClick}
+          disabled={importing}
+          className="px-3 py-1.5 text-gray-300 text-sm font-medium rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors disabled:opacity-50"
+        >
+          {importing ? '导入中...' : '导入'}
+        </button>
+        <button onClick={handleExport}
+          className="px-3 py-1.5 text-gray-300 text-sm font-medium rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors"
+        >
+          导出
+        </button>
         <button onClick={handleSave} disabled={saving}
           className={`px-4 py-1.5 text-white text-sm font-medium rounded-lg transition-colors ${saved ? 'bg-emerald-600' : 'bg-indigo-600 hover:bg-indigo-500'} disabled:opacity-50`}>
           {saving ? '保存中...' : saved ? '✓ 已保存' : '保存'}
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json"
+          onChange={handleFileChange}
+          className="hidden"
+        />
       </div>
 
       <div className="flex flex-1 overflow-hidden">

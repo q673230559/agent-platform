@@ -1,4 +1,4 @@
-import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, PaginatedRunList, MultiAgentSSEEvent, WorkspaceTreeItem, DashboardStats } from '../types'
+import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, PaginatedRunList, MultiAgentSSEEvent, WorkspaceTreeItem, DashboardStats, ImportPayload } from '../types'
 
 const BASE = '/api'
 
@@ -121,6 +121,24 @@ export const orchestrationsApi = {
   workspace: (id: number) => request<WorkspaceTreeItem[]>(`/orchestrations/${id}/workspace`),
   testScript: (id: number, data: { script: string; requirements: string }) =>
     request<{ stdout: string; stderr: string; exit_code: number }>(`/orchestrations/${id}/test-script`, { method: 'POST', body: JSON.stringify(data) }),
+  export: async (id: number, name: string) => {
+    const res = await fetch(`${BASE}/orchestrations/${id}/export`)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || res.statusText)
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${name}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  },
+  import: (data: ImportPayload) =>
+    request<Orchestration>('/orchestrations/import', { method: 'POST', body: JSON.stringify(data) }),
 }
 
 export function orchestrationStream(

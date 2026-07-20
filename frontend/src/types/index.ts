@@ -216,3 +216,43 @@ export interface MultiAgentSSEEvent {
   failed?: boolean
   metadata?: Record<string, unknown>
 }
+
+// ── Import / Export ──
+
+export interface ImportNode {
+  temp_id: string
+  node_type: string
+  node_key: string
+  label: string
+  position_x: number
+  position_y: number
+  config: Record<string, unknown>
+}
+
+export interface ImportEdge {
+  source_temp_id: string
+  target_temp_id: string
+  condition: string
+  label: string
+  is_default: boolean
+}
+
+export interface ImportOrchestration {
+  name: string
+  description: string
+  orchestration_type: OrchestrationType
+  config: Record<string, unknown>
+  is_active: boolean
+  cron_expression: string | null
+  schedule_enabled: boolean
+  max_retries: number
+  recursion_limit: number
+  nodes: ImportNode[]
+  edges: ImportEdge[]
+}
+
+export interface ImportPayload {
+  version: number
+  exported_at: string | null
+  orchestration: ImportOrchestration
+}
