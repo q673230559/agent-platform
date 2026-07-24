@@ -43,41 +43,66 @@ function TreeItem({ item, depth, last }: { item: WorkspaceTreeItem; depth: numbe
   )
 }
 
-export default function DirectoryTree({ orchestrationId }: { orchestrationId: number | null }) {
-  const [tree, setTree] = useState<WorkspaceTreeItem[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+interface DirectoryTreeProps {
+  orchestrationId?: number | null
+  treeData?: WorkspaceTreeItem[] | null
+  loading?: boolean
+  error?: string | null
+  emptyMessage?: string
+}
+
+export default function DirectoryTree({
+  orchestrationId,
+  treeData,
+  loading,
+  error,
+  emptyMessage,
+}: DirectoryTreeProps) {
+  const [internalTree, setInternalTree] = useState<WorkspaceTreeItem[] | null>(null)
+  const [internalError, setInternalError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (treeData !== undefined) return
     if (!orchestrationId) {
-      setTree(null)
-      setError(null)
+      setInternalTree(null)
+      setInternalError(null)
       return
     }
     orchestrationsApi.workspace(orchestrationId)
-      .then(setTree)
-      .catch((e) => setError(e.message))
-  }, [orchestrationId])
+      .then(setInternalTree)
+      .catch((e) => setInternalError(e.message))
+  }, [orchestrationId, treeData])
 
-  if (!orchestrationId) {
-    return <p className="text-xs text-gray-600">保存编排后即可查看工作空间文件。</p>
+  const dataMode = treeData !== undefined
+  const data = dataMode ? treeData : internalTree
+  const err = dataMode ? (error ?? null) : internalError
+  const loadingState = dataMode ? (loading ?? false) : false
+  const emptyText = emptyMessage ?? '保存编排后即可查看工作空间文件。'
+
+  if (!dataMode && !orchestrationId) {
+    return <p className="text-xs text-gray-600">{emptyText}</p>
   }
 
-  if (error) {
-    return <p className="text-xs text-red-400">加载工作空间失败: {error}</p>
-  }
-
-  if (tree === null) {
+  if (loadingState) {
     return <p className="text-xs text-gray-600">加载中...</p>
   }
 
-  if (tree.length === 0) {
-    return <p className="text-xs text-gray-600">工作空间目录尚未创建。执行编排后会自动生成。</p>
+  if (err) {
+    return <p className="text-xs text-red-400">加载工作空间失败: {err}</p>
+  }
+
+  if (data === null) {
+    return <p className="text-xs text-gray-600">加载中...</p>
+  }
+
+  if (data.length === 0) {
+    return <p className="text-xs text-gray-600">{emptyText}</p>
   }
 
   return (
     <div className="font-mono text-xs space-y-0.5">
-      {tree.map((item, i) => (
-        <TreeItem key={item.path} item={item} depth={0} last={i === tree.length - 1} />
+      {data.map((item, i) => (
+        <TreeItem key={item.path} item={item} depth={0} last={i === data.length - 1} />
       ))}
     </div>
   )

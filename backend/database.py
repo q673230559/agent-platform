@@ -20,8 +20,9 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    # Import orchestration models so they are registered on Base.metadata
+    # Import models so they are registered on Base.metadata
     import backend.models.orchestration  # noqa: F401
+    import backend.models.system_settings  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -62,6 +63,21 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE orchestration_nodes ADD COLUMN node_type VARCHAR(20) NOT NULL DEFAULT 'agent'"))
             if "node_key" not in orch_col_names:
                 await conn.execute(text("ALTER TABLE orchestration_nodes ADD COLUMN node_key VARCHAR(50) NOT NULL DEFAULT ''"))
+
+        # Add bot_id and workspace_dir to bots
+        bot_migrations_v2 = {
+            "bot_id": "ALTER TABLE bots ADD COLUMN bot_id VARCHAR(100) NOT NULL DEFAULT ''",
+            "workspace_dir": "ALTER TABLE bots ADD COLUMN workspace_dir VARCHAR(255) NOT NULL DEFAULT ''",
+        }
+        for col, sql in bot_migrations_v2.items():
+            if col not in existing_cols:
+                await conn.execute(text(sql))
+
+        # Add unique index on bot_id (idempotent)
+        try:
+            await conn.execute(text("CREATE UNIQUE INDEX idx_bot_id ON bots (bot_id)"))
+        except Exception:
+            pass
 
         # Add category to builtin_tools
         tool_cols = await conn.execute(

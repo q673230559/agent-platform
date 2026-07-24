@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import init_db, get_db
-from backend.routers import providers, bots, tools, orchestrations
+from backend.routers import providers, bots, tools, orchestrations, system_settings
 from backend.models.tool import BuiltinTool
 from backend.models.provider import ModelProvider
 from backend.models.bot import Bot
@@ -58,6 +58,7 @@ app.include_router(bots.router2, prefix="/api")
 app.include_router(bots.chat_router, prefix="/api")
 app.include_router(tools.router, prefix="/api")
 app.include_router(orchestrations.router, prefix="/api")
+app.include_router(system_settings.router, prefix="/api")
 
 
 @app.get("/api/health")

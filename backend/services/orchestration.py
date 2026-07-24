@@ -116,6 +116,7 @@ async def _stream_agent(
 ) -> str:
     """Run a single agent with full token streaming. Events go to queue, returns final output."""
     from backend.services.llm_factory import create_llm
+    from backend.services.retry import is_retryable_error, _backoff_delay
     from backend.tools.registry import registry
 
     cfg = node.config or {}
@@ -125,6 +126,8 @@ async def _stream_agent(
     tools_list = cfg.get("tools", [])
     agent_system_prompt = cfg.get("system_prompt", "")
     node_recursion_limit = cfg.get("recursion_limit", recursion_limit)
+    llm_max_retries = cfg.get("llm_max_retries", 2)
+    agent_max_retries = cfg.get("max_retries", 2)
 
     provider = None
     if provider_id:
@@ -133,10 +136,8 @@ async def _stream_agent(
     if not provider:
         raise ValueError(f"Provider {provider_id} not found for node {node.label}")
 
-    llm = create_llm(provider, model_name, temperature)
     tool_fns = [registry.get(t) for t in tools_list if registry.get(t)]
     system_prompt = _build_node_system_prompt(node, node_outputs, agent_system_prompt)
-    agent = create_agent(llm, tool_fns, system_prompt=system_prompt)
 
     resolved_input = resolve_template_vars(user_input, node_outputs)
     input_msg = f"## Task\n{resolved_input}"
@@ -153,48 +154,79 @@ async def _stream_agent(
 
     full_output = ""
     node_error = None
-    try:
-        async for event in agent.astream_events(
-            {"messages": [HumanMessage(content=input_msg)]},
-            config={"recursion_limit": node_recursion_limit},
-            version="v2",
-        ):
-            kind = event.get("event", "")
 
-            if cancel_scope.cancelled:
+    for attempt in range(agent_max_retries + 1):
+        if attempt > 0:
+            # Reset output from failed attempt
+            full_output = ""
+            delay = _backoff_delay(attempt - 1, base_delay=1.0, max_delay=60.0, backoff_factor=2.0, jitter=True)
+            logger.warning(
+                f"Agent {node.label} retryable error, retrying in {delay:.1f}s "
+                f"(attempt {attempt}/{agent_max_retries})"
+            )
+            await queue.put({
+                "type": "node_retry",
+                "node_id": node.id,
+                "node_label": node.label,
+                "content": f"速率限制，{delay:.0f}秒后重试 ({attempt}/{agent_max_retries})",
+            })
+            await asyncio.sleep(delay)
+
+        try:
+            llm = create_llm(provider, model_name, temperature, max_retries=llm_max_retries)
+            agent = create_agent(llm, tool_fns, system_prompt=system_prompt)
+
+            async for event in agent.astream_events(
+                {"messages": [HumanMessage(content=input_msg)]},
+                config={"recursion_limit": node_recursion_limit},
+                version="v2",
+            ):
+                kind = event.get("event", "")
+
+                if cancel_scope.cancelled:
+                    break
+
+                if kind == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+                    token = chunk.content
+                    if token:
+                        if isinstance(token, list):
+                            token = "".join(str(t) for t in token if t)
+                        if isinstance(token, str) and token:
+                            full_output += token
+                            await queue.put({
+                                "type": "token",
+                                "node_id": node.id,
+                                "node_label": node.label,
+                                "content": token,
+                            })
+
+                elif kind == "on_tool_start":
+                    tc = {
+                        "name": event.get("name", ""),
+                        "input": event["data"].get("input", {}),
+                    }
+                    await queue.put({
+                        "type": "tool_call",
+                        "node_id": node.id,
+                        "node_label": node.label,
+                        "content": tc,
+                    })
+
+            # Success — exit retry loop
+            break
+
+        except Exception as e:
+            if not is_retryable_error(e) or attempt >= agent_max_retries:
+                logger.exception(f"Agent {node.label} failed")
+                full_output = f"Error: {e}"
+                node_error = str(e)
+                cancel_scope.cancel("failed")
                 break
-
-            if kind == "on_chat_model_stream":
-                chunk = event["data"]["chunk"]
-                token = chunk.content
-                if token:
-                    if isinstance(token, list):
-                        token = "".join(str(t) for t in token if t)
-                    if isinstance(token, str) and token:
-                        full_output += token
-                        await queue.put({
-                            "type": "token",
-                            "node_id": node.id,
-                            "node_label": node.label,
-                            "content": token,
-                        })
-
-            elif kind == "on_tool_start":
-                tc = {
-                    "name": event.get("name", ""),
-                    "input": event["data"].get("input", {}),
-                }
-                await queue.put({
-                    "type": "tool_call",
-                    "node_id": node.id,
-                    "node_label": node.label,
-                    "content": tc,
-                })
-    except Exception as e:
-        logger.exception(f"Agent {node.label} failed")
-        full_output = f"Error: {e}"
-        node_error = str(e)
-        cancel_scope.cancel("failed")
+            logger.warning(
+                f"Agent {node.label} retryable error "
+                f"(attempt {attempt + 1}/{agent_max_retries + 1}): {e}"
+            )
 
     if node_error:
         await queue.put({
@@ -816,10 +848,11 @@ async def _execute_supervisor(
         )
 
         from backend.services.llm_factory import create_llm
+        from backend.services.retry import is_retryable_error, _backoff_delay
         cfg = supervisor_node.config or {}
         supervisor_recursion_limit = cfg.get("recursion_limit", recursion_limit)
-        llm = create_llm(provider, cfg.get("model_name", ""), cfg.get("temperature", 0.7))
-        agent = create_agent(llm, [], system_prompt=supervisor_prompt_text)
+        supervisor_llm_max_retries = cfg.get("llm_max_retries", 2)
+        supervisor_max_retries = cfg.get("max_retries", 2)
 
         history_messages = [HumanMessage(content=message)]
 
@@ -827,17 +860,47 @@ async def _execute_supervisor(
         await queue.put({"type": "node_start", "node_id": supervisor_node.id, "node_label": supervisor_node.label})
 
         full_output = ""
-        async for event in agent.astream_events(
-            {"messages": history_messages},
-            config={"recursion_limit": supervisor_recursion_limit},
-            version="v2",
-        ):
-            kind = event.get("event", "")
-            if kind == "on_chat_model_stream":
-                token = event["data"]["chunk"].content
-                if token and isinstance(token, str):
-                    full_output += token
-                    await queue.put({"type": "token", "node_id": supervisor_node.id, "node_label": supervisor_node.label, "content": token})
+
+        for attempt in range(supervisor_max_retries + 1):
+            if attempt > 0:
+                full_output = ""
+                delay = _backoff_delay(attempt - 1, base_delay=1.0, max_delay=60.0, backoff_factor=2.0, jitter=True)
+                logger.warning(
+                    f"Supervisor retryable error, retrying in {delay:.1f}s "
+                    f"(attempt {attempt}/{supervisor_max_retries})"
+                )
+                await queue.put({"type": "node_retry", "node_id": supervisor_node.id, "node_label": supervisor_node.label, "content": f"速率限制，{delay:.0f}秒后重试 ({attempt}/{supervisor_max_retries})"})
+                await asyncio.sleep(delay)
+
+            try:
+                llm = create_llm(provider, cfg.get("model_name", ""), cfg.get("temperature", 0.7), max_retries=supervisor_llm_max_retries)
+                agent = create_agent(llm, [], system_prompt=supervisor_prompt_text)
+
+                async for event in agent.astream_events(
+                    {"messages": history_messages},
+                    config={"recursion_limit": supervisor_recursion_limit},
+                    version="v2",
+                ):
+                    kind = event.get("event", "")
+                    if kind == "on_chat_model_stream":
+                        token = event["data"]["chunk"].content
+                        if token and isinstance(token, str):
+                            full_output += token
+                            await queue.put({"type": "token", "node_id": supervisor_node.id, "node_label": supervisor_node.label, "content": token})
+
+                # Success — exit retry loop
+                break
+
+            except Exception as e:
+                if not is_retryable_error(e) or attempt >= supervisor_max_retries:
+                    logger.exception(f"Supervisor agent failed")
+                    full_output = f"Error: {e}"
+                    cancel_scope.cancel("failed")
+                    break
+                logger.warning(
+                    f"Supervisor retryable error "
+                    f"(attempt {attempt + 1}/{supervisor_max_retries + 1}): {e}"
+                )
 
         node_outputs[supervisor_node.node_key or supervisor_node.label] = full_output
         await queue.put({"type": "node_end", "node_id": supervisor_node.id, "node_label": supervisor_node.label, "output": full_output})

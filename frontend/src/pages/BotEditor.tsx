@@ -4,7 +4,7 @@ import { providersApi, botsApi, toolsApi } from '../api/client'
 import type { Provider, Tool, BotForm } from '../types'
 
 const defaultForm: BotForm = {
-  name: '', provider_id: 0, model_name: '',
+  name: '', bot_id: '', workspace_dir: '', provider_id: 0, model_name: '',
   system_prompt: '', temperature: 0.7, is_active: true, tool_ids: [],
   avatar_url: '', bio: '', greeting_message: '', tags: [],
 }
@@ -20,6 +20,7 @@ function genAvatarUrl(name: string) {
 const templates = [
   {
     name: 'HR 小助手',
+    bot_id: 'hr_assistant',
     avatar_url: '',
     bio: '专业的人力资源助手，解答薪酬福利、考勤假期、入职培训等问题',
     greeting_message: '你好！我是 HR 小助手 👋\n\n我可以帮你解答薪酬福利、考勤假期、入职流程、培训安排等问题。有什么需要帮忙的吗？',
@@ -28,6 +29,7 @@ const templates = [
   },
   {
     name: '代码审查员',
+    bot_id: 'code_reviewer',
     avatar_url: '',
     bio: '资深代码审查专家，提供代码优化建议和最佳实践指导',
     greeting_message: 'Hello! 我是代码审查员 🔍\n\n我可以帮你审查代码质量、提供优化建议、解释技术方案。把你的代码发给我吧！',
@@ -36,6 +38,7 @@ const templates = [
   },
   {
     name: '翻译官',
+    bot_id: 'translator',
     avatar_url: '',
     bio: '精通中英日韩等多语种翻译，支持商务、技术、文学等场景',
     greeting_message: '你好！我是翻译官 🌐\n\n我可以帮你进行多语种翻译，支持中文、英文、日文、韩文等。直接发文字给我即可。',
@@ -44,6 +47,7 @@ const templates = [
   },
   {
     name: '客服小美',
+    bot_id: 'customer_service',
     avatar_url: '',
     bio: '7x24 小时在线客服，快速响应用户咨询与问题处理',
     greeting_message: '您好！我是客服小美 😊\n\n很高兴为您服务！无论您遇到什么问题，都可以随时告诉我，我会尽快帮您解决。',
@@ -52,6 +56,7 @@ const templates = [
   },
   {
     name: '文案大师',
+    bot_id: 'copywriter',
     avatar_url: '',
     bio: '创意文案写手，擅长品牌文案、新媒体内容、广告创意',
     greeting_message: '嗨！我是文案大师 ✍️\n\n我可以帮你写公众号推文、品牌介绍、广告文案、小红书笔记……告诉我你的需求，马上开写！',
@@ -60,6 +65,7 @@ const templates = [
   },
   {
     name: '数据分析师',
+    bot_id: 'data_analyst',
     avatar_url: '',
     bio: '数据分析与商业智能专家，从数据中洞察业务增长机会',
     greeting_message: '你好！我是数据分析师 📊\n\n我可以帮你分析数据趋势、制作报表解读、提供业务洞察。请描述你的分析需求。',
@@ -82,6 +88,7 @@ export default function BotEditor() {
   const [modelsLoading, setModelsLoading] = useState(false)
   const [customModel, setCustomModel] = useState(false)
   const [tagInput, setTagInput] = useState('')
+  const [generating, setGenerating] = useState(false)
 
   useEffect(() => {
     providersApi.list().then(setProviders)
@@ -90,6 +97,8 @@ export default function BotEditor() {
       botsApi.get(Number(id)).then(b => {
         setForm({
           name: b.name,
+          bot_id: b.bot_id || '',
+          workspace_dir: b.workspace_dir || '',
           provider_id: b.provider_id,
           model_name: b.model_name,
           system_prompt: b.system_prompt,
@@ -151,17 +160,59 @@ export default function BotEditor() {
     }
   }
 
+  const generateAvatarAndId = async () => {
+    const name = form.name.trim()
+    if (!name) return
+    const avatarUrl = genAvatarUrl(name)
+    const updates: Partial<BotForm> = { avatar_url: avatarUrl }
+    // Auto-generate bot_id only if currently empty
+    if (!form.bot_id.trim()) {
+      try {
+        const result = await botsApi.generateId(name)
+        updates.bot_id = result.bot_id
+        updates.workspace_dir = result.bot_id
+      } catch {
+        // fallback: leave empty, will be slugified on save
+      }
+    }
+    setForm(f => ({ ...f, ...updates }))
+  }
+
   const randomFill = () => {
     const t = templates[Math.floor(Math.random() * templates.length)]
     setForm(f => ({
       ...f,
       name: t.name,
+      bot_id: t.bot_id || '',
+      workspace_dir: t.bot_id || '',
       avatar_url: genAvatarUrl(t.name),
       bio: t.bio,
       greeting_message: t.greeting_message,
       system_prompt: t.system_prompt,
       tags: [...t.tags],
     }))
+  }
+
+  const autoGenerate = async () => {
+    const bio = form.bio.trim()
+    if (!bio) {
+      setError('请先填写简介')
+      return
+    }
+    setError('')
+    setGenerating(true)
+    try {
+      const result = await botsApi.generateFromBio(bio)
+      setForm(f => ({
+        ...f,
+        system_prompt: result.system_prompt,
+        greeting_message: result.greeting_message,
+      }))
+    } catch (e: unknown) {
+      setError((e as Error).message)
+    } finally {
+      setGenerating(false)
+    }
   }
 
   const submit = async () => {
@@ -207,7 +258,7 @@ export default function BotEditor() {
                   <input className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" value={form.avatar_url} onChange={e => setForm(f => ({ ...f, avatar_url: e.target.value }))} placeholder="https://..." />
                   <button
                     type="button"
-                    onClick={() => setForm(f => ({ ...f, avatar_url: genAvatarUrl(f.name) }))}
+                    onClick={generateAvatarAndId}
                     disabled={!form.name}
                     className="text-[10px] text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 rounded-lg px-2 py-2 hover:bg-indigo-500/10 disabled:opacity-30 disabled:cursor-not-allowed shrink-0 transition-colors"
                     title="根据名称生成头像"
@@ -221,6 +272,52 @@ export default function BotEditor() {
                 <img src={form.avatar_url} alt="头像预览" className="w-12 h-12 rounded-full object-cover bg-gray-800 shrink-0 border border-gray-700" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
               )}
             </div>
+          </div>
+        </div>
+
+        {/* Bot ID + Workspace Directory */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1.5">Bot ID</label>
+            <div className="flex gap-1">
+              <input
+                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500"
+                value={form.bot_id}
+                onChange={e => {
+                  const val = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '_')
+                  setForm(f => ({ ...f, bot_id: val, workspace_dir: f.workspace_dir || val }))
+                }}
+                placeholder="my_bot_id"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!form.name) return
+                  try {
+                    const result = await botsApi.generateId(form.name)
+                    setForm(f => ({ ...f, bot_id: result.bot_id, workspace_dir: f.workspace_dir || result.bot_id }))
+                  } catch (e) {
+                    setError((e as Error).message)
+                  }
+                }}
+                disabled={!form.name}
+                className="text-[10px] text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 rounded-lg px-2 py-2 hover:bg-indigo-500/10 disabled:opacity-30 disabled:cursor-not-allowed shrink-0 transition-colors"
+                title="根据名称生成 ID"
+              >
+                生成
+              </button>
+            </div>
+            <p className="text-[10px] text-gray-600 mt-1">唯一标识符，仅限小写字母、数字、下划线和连字符</p>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1.5">工作目录</label>
+            <input
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500"
+              value={form.workspace_dir}
+              onChange={e => setForm(f => ({ ...f, workspace_dir: e.target.value.replace(/\.\.|\/|\\/g, '') }))}
+              placeholder="默认与 Bot ID 相同"
+            />
+            <p className="text-[10px] text-gray-600 mt-1">workspace 下的子目录名，默认使用 Bot ID</p>
           </div>
         </div>
 
@@ -272,6 +369,17 @@ export default function BotEditor() {
         <div>
           <label className="block text-xs text-gray-500 mb-1.5">欢迎语</label>
           <textarea className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 h-20 resize-none" value={form.greeting_message} onChange={e => setForm(f => ({ ...f, greeting_message: e.target.value }))} placeholder="用户初次进入对话时看到的欢迎消息" />
+        </div>
+
+        {/* Auto-generate button */}
+        <div className="flex items-center justify-end">
+          <button
+            onClick={autoGenerate}
+            disabled={generating || !form.bio.trim()}
+            className="text-xs text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-lg px-3 py-1.5 hover:bg-emerald-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {generating ? '生成中...' : '✨ 自动生成'}
+          </button>
         </div>
 
         {/* System Prompt */}

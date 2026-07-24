@@ -8,6 +8,8 @@ class Bot(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False, unique=True)
+    bot_id = Column(String(100), nullable=False, unique=True, default="")
+    workspace_dir = Column(String(255), nullable=False, default="")
     provider_id = Column(Integer, ForeignKey("model_providers.id"), nullable=False)
     model_name = Column(String(100), nullable=False)
     system_prompt = Column(Text, default="")

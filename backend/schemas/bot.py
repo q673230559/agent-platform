@@ -4,6 +4,8 @@ from datetime import datetime
 
 class BotCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
+    bot_id: str = Field("", max_length=100)
+    workspace_dir: str = Field("", max_length=255)
     provider_id: int
     model_name: str = Field(..., min_length=1, max_length=100)
     system_prompt: str = ""
@@ -18,6 +20,8 @@ class BotCreate(BaseModel):
 
 class BotUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
+    bot_id: str | None = Field(None, max_length=100)
+    workspace_dir: str | None = Field(None, max_length=255)
     provider_id: int | None = None
     model_name: str | None = Field(None, min_length=1, max_length=100)
     system_prompt: str | None = None
@@ -50,6 +54,8 @@ class BotToolOut(BaseModel):
 class BotOut(BaseModel):
     id: int
     name: str
+    bot_id: str = ""
+    workspace_dir: str = ""
     provider_id: int
     model_name: str
     system_prompt: str

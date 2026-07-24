@@ -9,6 +9,7 @@ import Orchestrations from './pages/Orchestrations'
 import OrchestrationEditor from './pages/OrchestrationEditor'
 import OrchestrationRun from './pages/OrchestrationRun'
 import RunHistory from './pages/RunHistory'
+import SystemSettings from './pages/SystemSettings'
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/orchestrations/:id/edit" element={<OrchestrationEditor />} />
         <Route path="/orchestrations/:id/run" element={<OrchestrationRun />} />
         <Route path="/orchestrations/:id/runs" element={<RunHistory />} />
+        <Route path="/settings" element={<SystemSettings />} />
       </Routes>
     </Layout>
   )

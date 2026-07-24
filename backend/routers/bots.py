@@ -1,4 +1,8 @@
 import json
+import os
+import re
+import unicodedata
+from backend.config import WORKSPACE_ROOT, set_workspace_override
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,11 +16,46 @@ from backend.schemas.bot import (
     BotToolUpdate, ConversationCreate, ConversationOut,
     MessageOut, ChatRequest,
 )
+from backend.schemas.bot_generate import GenerateFromBioRequest, GenerateFromBioResponse, GenerateIdRequest, GenerateIdResponse
+from backend.schemas.orchestration import WorkspaceTreeItem
 from backend.services.agent import stream_chat
+from backend.services.system_model import get_system_llm
 
 router = APIRouter(prefix="/bots", tags=["bots"])
 
-# ── Bot CRUD ──
+# ── Helpers ──
+
+BOT_ID_PATTERN = re.compile(r'^[a-z0-9_][a-z0-9_-]*$')
+
+
+def slugify(name: str) -> str:
+    """Convert a name to a URL-friendly slug."""
+    name = unicodedata.normalize('NFKD', name)
+    name = name.encode('ascii', 'ignore').decode('ascii')
+    name = re.sub(r'[^a-zA-Z0-9\s_-]', '', name)
+    name = re.sub(r'[\s-]+', '_', name)
+    name = name.strip('_').lower()
+    return name[:100] if name else "bot"
+
+
+def validate_bot_id(bot_id: str) -> str:
+    if not bot_id:
+        raise HTTPException(400, "Bot ID 不能为空")
+    if not BOT_ID_PATTERN.match(bot_id):
+        raise HTTPException(400, "Bot ID 只能包含小写字母、数字、下划线和连字符")
+    if len(bot_id) > 100:
+        raise HTTPException(400, "Bot ID 过长")
+    return bot_id
+
+
+def validate_workspace_dir(ws_dir: str) -> str:
+    if not ws_dir:
+        raise HTTPException(400, "Workspace 目录不能为空")
+    if '..' in ws_dir or '/' in ws_dir or '\\' in ws_dir:
+        raise HTTPException(400, "Workspace 目录包含非法字符")
+    if len(ws_dir) > 255:
+        raise HTTPException(400, "Workspace 目录名称过长")
+    return ws_dir
 
 def _bot_to_out(bot: Bot) -> BotOut:
     tools = []
@@ -32,6 +71,8 @@ def _bot_to_out(bot: Bot) -> BotOut:
     return BotOut(
         id=bot.id,
         name=bot.name,
+        bot_id=bot.bot_id or "",
+        workspace_dir=bot.workspace_dir or "",
         provider_id=bot.provider_id,
         model_name=bot.model_name,
         system_prompt=bot.system_prompt or "",
@@ -62,8 +103,23 @@ async def create_bot(data: BotCreate, db: AsyncSession = Depends(get_db)):
     if existing is not None:
         raise HTTPException(409, "Bot name already exists")
 
+    # Resolve bot_id
+    bot_id = data.bot_id.strip() if data.bot_id else slugify(data.name)
+    bot_id = validate_bot_id(bot_id)
+
+    # Check bot_id uniqueness
+    existing_id = await db.scalar(select(Bot.id).where(Bot.bot_id == bot_id))
+    if existing_id is not None:
+        raise HTTPException(409, f"Bot ID '{bot_id}' 已存在")
+
+    # Resolve workspace_dir
+    workspace_dir = data.workspace_dir.strip() if data.workspace_dir else bot_id
+    workspace_dir = validate_workspace_dir(workspace_dir)
+
     bot = Bot(
         name=data.name,
+        bot_id=bot_id,
+        workspace_dir=workspace_dir,
         provider_id=data.provider_id,
         model_name=data.model_name,
         system_prompt=data.system_prompt,
@@ -87,7 +143,74 @@ async def create_bot(data: BotCreate, db: AsyncSession = Depends(get_db)):
 
     await db.commit()
     await db.refresh(bot)
+
+    # Create workspace directory on disk
+    workspace_path = os.path.join(WORKSPACE_ROOT, "workspace", workspace_dir)
+    os.makedirs(workspace_path, exist_ok=True)
+
     return _bot_to_out(bot)
+
+
+@router.post("/generate-from-bio", response_model=GenerateFromBioResponse)
+async def generate_from_bio(req: GenerateFromBioRequest, db: AsyncSession = Depends(get_db)):
+    llm = await get_system_llm(db, temperature=0.8)
+    if llm is None:
+        raise HTTPException(400, "系统模型未配置，请先在系统设置中配置模型")
+
+    prompt = f"""你是一个专业的智能体配置助手。请根据以下机器人简介，生成对应的系统提示词和欢迎语。
+
+机器人简介：
+{req.bio}
+
+请严格按照以下JSON格式返回结果，不要输出任何其他内容：
+{{"system_prompt": "系统提示词内容", "greeting_message": "欢迎语内容"}}
+
+要求：
+1. system_prompt 应该明确定义机器人的角色、专业领域、语气风格和行为准则，使用中文。
+2. greeting_message 应该热情友好，简要介绍机器人的功能，包含一个表情符号，使用中文。"""
+
+    try:
+        response = await llm.ainvoke(prompt)
+        content = response.content.strip()
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+        data = json.loads(content)
+        system_prompt = data.get("system_prompt", "").strip()
+        greeting_message = data.get("greeting_message", "").strip()
+        if not system_prompt or not greeting_message:
+            raise ValueError("生成内容不完整")
+        return GenerateFromBioResponse(
+            system_prompt=system_prompt,
+            greeting_message=greeting_message,
+        )
+    except json.JSONDecodeError:
+        raise HTTPException(500, "生成内容格式错误，请重试")
+    except Exception as e:
+        raise HTTPException(500, f"生成失败：{str(e)}")
+
+
+@router.post("/generate-id", response_model=GenerateIdResponse)
+async def generate_bot_id(req: GenerateIdRequest, db: AsyncSession = Depends(get_db)):
+    llm = await get_system_llm(db, temperature=0.3)
+    if llm is not None:
+        prompt = f"""你是一个命名助手。请将以下名称转成一个简短的英文ID（slug格式）。
+只使用小写字母、数字和下划线，不要使用空格或特殊字符。长度不超过50个字符。
+
+名称：{req.name}
+
+请直接返回ID内容，不要输出任何其他文字或JSON格式。示例格式：hr_assistant, code_reviewer"""
+        try:
+            response = await llm.ainvoke(prompt)
+            raw = response.content.strip().lower()
+            raw = re.sub(r'[^a-z0-9_]', '_', raw)
+            raw = re.sub(r'_+', '_', raw)
+            raw = raw.strip('_')[:100]
+            if raw:
+                return GenerateIdResponse(bot_id=raw)
+        except Exception:
+            pass
+
+    return GenerateIdResponse(bot_id=slugify(req.name))
 
 
 @router.get("/{bot_id}", response_model=BotOut)
@@ -107,6 +230,17 @@ async def update_bot(bot_id: int, data: BotUpdate, db: AsyncSession = Depends(ge
         existing = await db.scalar(select(Bot.id).where(Bot.name == data.name, Bot.id != bot_id))
         if existing is not None:
             raise HTTPException(409, "Bot name already exists")
+    if data.bot_id is not None:
+        new_bot_id = data.bot_id.strip()
+        if not new_bot_id:
+            raise HTTPException(400, "Bot ID 不能为空")
+        new_bot_id = validate_bot_id(new_bot_id)
+        existing_id = await db.scalar(select(Bot.id).where(Bot.bot_id == new_bot_id, Bot.id != bot_id))
+        if existing_id is not None:
+            raise HTTPException(409, f"Bot ID '{new_bot_id}' 已存在")
+        data.bot_id = new_bot_id
+    if data.workspace_dir is not None:
+        data.workspace_dir = validate_workspace_dir(data.workspace_dir.strip())
 
     for field, value in data.model_dump(exclude_unset=True, exclude={"tool_ids"}).items():
         if value is not None:
@@ -250,11 +384,21 @@ async def chat(bot_id: int, req: ChatRequest, db: AsyncSession = Depends(get_db)
         conv.title = req.message[:80]
     await db.commit()
 
+    # Resolve bot workspace directory
+    ws_dir = os.path.join(WORKSPACE_ROOT, "workspace", bot.workspace_dir or bot.bot_id)
+    os.makedirs(ws_dir, exist_ok=True)
+    set_workspace_override(ws_dir)
+
+    # Inject workspace path into system prompt so the LLM knows its working directory
+    system_prompt = bot.system_prompt or ""
+    ws_hint = f"\n\n[工作目录: {ws_dir}]\n所有文件读写操作都在此目录下进行，请使用相对路径引用文件。"
+    system_prompt = system_prompt + ws_hint
+
     async def event_stream():
         full_response = ""
         tool_calls_log = None
         try:
-            async for event in stream_chat(bot, provider, req.message, history, bot.system_prompt or ""):
+            async for event in stream_chat(bot, provider, req.message, history, system_prompt):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 if event["type"] == "token":
                     full_response += event["content"]
@@ -276,3 +420,33 @@ async def chat(bot_id: int, req: ChatRequest, db: AsyncSession = Depends(get_db)
             await s.commit()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ── Workspace ──
+
+def _build_workspace_tree(dir_path: str) -> list[dict]:
+    items = []
+    try:
+        entries = sorted(os.scandir(dir_path), key=lambda e: (not e.is_dir(), e.name))
+    except OSError:
+        return []
+    for entry in entries:
+        node: dict = {
+            "name": entry.name,
+            "path": entry.path,
+            "type": "directory" if entry.is_dir() else "file",
+            "children": [],
+        }
+        if entry.is_dir():
+            node["children"] = _build_workspace_tree(entry.path)
+        items.append(node)
+    return items
+
+
+@router.get("/{bot_id}/workspace", response_model=list[WorkspaceTreeItem])
+async def get_bot_workspace_tree(bot_id: int, db: AsyncSession = Depends(get_db)):
+    bot = await db.get(Bot, bot_id)
+    if not bot:
+        raise HTTPException(404, "Bot not found")
+    ws_dir = os.path.join(WORKSPACE_ROOT, "workspace", bot.workspace_dir or bot.bot_id)
+    return _build_workspace_tree(ws_dir)

@@ -101,6 +101,15 @@ async def delete_provider(provider_id: int, db: AsyncSession = Depends(get_db)):
     bot_count = await db.scalar(select(Bot.id).where(Bot.provider_id == provider_id).limit(1))
     if bot_count is not None:
         raise HTTPException(400, "Cannot delete: bots are still using this provider")
+
+    # Clear system settings reference if this provider is the system model
+    from backend.models.system_settings import SystemSettings
+    sys_result = await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
+    sys_settings = sys_result.scalar_one_or_none()
+    if sys_settings and sys_settings.provider_id == provider_id:
+        sys_settings.provider_id = None
+        sys_settings.model_name = None
+
     await db.delete(provider)
     await db.commit()
 

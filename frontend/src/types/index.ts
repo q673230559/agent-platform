@@ -26,6 +26,8 @@ export interface Tool {
 export interface Bot {
   id: number
   name: string
+  bot_id: string
+  workspace_dir: string
   provider_id: number
   model_name: string
   system_prompt: string
@@ -42,6 +44,8 @@ export interface Bot {
 
 export interface BotForm {
   name: string
+  bot_id: string
+  workspace_dir: string
   provider_id: number
   model_name: string
   system_prompt: string
@@ -88,6 +92,28 @@ export interface SSEEvent {
   type: 'token' | 'tool_call' | 'done' | 'error'
   content: string
   tool_calls?: unknown[]
+}
+
+export interface SystemSettings {
+  id: number
+  provider_id: number | null
+  model_name: string | null
+  created_at: string
+  updated_at: string | null
+}
+
+export interface SystemSettingsUpdate {
+  provider_id: number | null
+  model_name: string | null
+}
+
+export interface GenerateFromBioResponse {
+  system_prompt: string
+  greeting_message: string
+}
+
+export interface GenerateIdResponse {
+  bot_id: string
 }
 
 export interface DashboardStats {
@@ -206,7 +232,7 @@ export interface WorkspaceTreeItem {
 }
 
 export interface MultiAgentSSEEvent {
-  type: 'orchestration_start' | 'node_start' | 'token' | 'tool_call' | 'node_end' | 'node_skip' | 'node_error' | 'orchestration_done' | 'error'
+  type: 'orchestration_start' | 'node_start' | 'token' | 'tool_call' | 'node_end' | 'node_skip' | 'node_error' | 'node_retry' | 'orchestration_done' | 'error'
   node_id?: number
   node_label?: string
   nodes?: { id: number; label: string; node_type: string; node_key?: string; config?: Record<string, unknown> }[]

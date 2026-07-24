@@ -5,13 +5,15 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from backend.models.bot import Bot
 from backend.models.provider import ModelProvider
 from backend.services.llm_factory import create_llm
+from backend.services.retry import is_retryable_error, _backoff_delay
 from backend.tools.registry import registry
+import asyncio
 
 logger = logging.getLogger("agent")
 
 
-def build_agent(bot: Bot, provider: ModelProvider, system_prompt: str):
-    llm = create_llm(provider, bot.model_name, bot.temperature)
+def build_agent(bot: Bot, provider: ModelProvider, system_prompt: str, llm_max_retries: int = 2):
+    llm = create_llm(provider, bot.model_name, bot.temperature, max_retries=llm_max_retries)
     tools = []
     for link in bot.tool_links:
         tool_factory = registry.get(link.tool.name)
@@ -26,50 +28,72 @@ async def stream_chat(bot: Bot, provider: ModelProvider, message: str, history: 
     logger.info(f"System prompt: {system_prompt[:200]}...")
     logger.info(f"History messages: {len(history)}")
     logger.info(f"User message: {message[:200]}")
-    agent = build_agent(bot, provider, system_prompt)
+
     messages = history + [HumanMessage(content=message)]
-    full_response = ""
-    tool_calls_log = []
+    max_retries = 2
 
-    async for event in agent.astream_events(
-        {"messages": messages},
-        config={"recursion_limit": 50},
-        version="v2",
-    ):
-        kind = event.get("event", "")
-        name = event.get("name", "")
+    for attempt in range(max_retries + 1):
+        if attempt > 0:
+            delay = _backoff_delay(attempt - 1, base_delay=1.0, max_delay=60.0, backoff_factor=2.0, jitter=True)
+            logger.warning(f"Chat retryable error, retrying in {delay:.1f}s (attempt {attempt}/{max_retries})")
+            yield {"type": "retry", "content": f"速率限制，{delay:.0f}秒后重试 ({attempt}/{max_retries})"}
+            await asyncio.sleep(delay)
 
-        if kind == "on_chat_model_start":
-            logger.info(f"LLM call starting...")
+        agent = build_agent(bot, provider, system_prompt)
+        full_response = ""
+        tool_calls_log = []
+        last_error: Exception | None = None
 
-        elif kind == "on_chat_model_stream":
-            chunk = event["data"]["chunk"]
-            token = chunk.content
-            if token:
-                full_response += token
-                yield {"type": "token", "content": token}
+        try:
+            async for event in agent.astream_events(
+                {"messages": messages},
+                config={"recursion_limit": 50},
+                version="v2",
+            ):
+                kind = event.get("event", "")
+                name = event.get("name", "")
 
-        elif kind == "on_chat_model_end":
-            logger.info(f"LLM call ended, output tokens so far: {len(full_response)}")
+                if kind == "on_chat_model_start":
+                    logger.info(f"LLM call starting...")
 
-        elif kind == "on_tool_start":
-            tc = {
-                "name": event.get("name", ""),
-                "input": event["data"].get("input", {}),
-            }
-            tool_calls_log.append(tc)
-            logger.info(f"Tool call: {tc['name']} input={tc['input']}")
-            yield {"type": "tool_call", "content": tc}
+                elif kind == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+                    token = chunk.content
+                    if token:
+                        full_response += token
+                        yield {"type": "token", "content": token}
 
-        elif kind == "on_tool_end":
-            output = event["data"].get("output", "")
-            logger.info(f"Tool finished: {event.get('name', '')} output={str(output)[:200]}")
+                elif kind == "on_chat_model_end":
+                    logger.info(f"LLM call ended, output tokens so far: {len(full_response)}")
 
-        elif kind == "on_chain_start":
-            logger.info(f"Chain start: {name}")
+                elif kind == "on_tool_start":
+                    tc = {
+                        "name": event.get("name", ""),
+                        "input": event["data"].get("input", {}),
+                    }
+                    tool_calls_log.append(tc)
+                    logger.info(f"Tool call: {tc['name']} input={tc['input']}")
+                    yield {"type": "tool_call", "content": tc}
 
-        elif kind == "on_chain_end":
-            logger.info(f"Chain end: {name}")
+                elif kind == "on_tool_end":
+                    output = event["data"].get("output", "")
+                    logger.info(f"Tool finished: {event.get('name', '')} output={str(output)[:200]}")
 
-    logger.info(f"Chat done: {len(full_response)} chars, {len(tool_calls_log or [])} tool calls")
-    yield {"type": "done", "content": full_response, "tool_calls": tool_calls_log or None}
+                elif kind == "on_chain_start":
+                    logger.info(f"Chain start: {name}")
+
+                elif kind == "on_chain_end":
+                    logger.info(f"Chain end: {name}")
+
+            # Success
+            logger.info(f"Chat done: {len(full_response)} chars, {len(tool_calls_log or [])} tool calls")
+            yield {"type": "done", "content": full_response, "tool_calls": tool_calls_log or None}
+            return
+
+        except Exception as e:
+            last_error = e
+            if not is_retryable_error(e) or attempt >= max_retries:
+                logger.exception(f"Chat failed after {attempt + 1} attempt(s)")
+                yield {"type": "error", "content": str(e)}
+                return
+            logger.warning(f"Chat retryable error (attempt {attempt + 1}/{max_retries + 1}): {e}")

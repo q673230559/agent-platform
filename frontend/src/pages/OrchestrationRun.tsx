@@ -217,6 +217,7 @@ export default function OrchestrationRun() {
       onNodeEnd: (nid, _l, out) => { updateNodeStatus(nid, 'done'); setNodeOutputs(prev => prev.map(o => o.nodeId === nid ? { ...o, status: 'done' as const, content: out || o.content } : o)) },
       onNodeSkip: (nid) => { updateNodeStatus(nid, 'skipped'); setNodeOutputs(prev => prev.map(o => o.nodeId === nid ? { ...o, status: 'skipped' as const, content: '已跳过（上游决策未选中）' } : o)) },
       onNodeError: (nid, _l, err) => { updateNodeStatus(nid, 'error'); setNodeOutputs(prev => prev.map(o => o.nodeId === nid ? { ...o, status: 'error' as const, content: o.content + '\n\n❌ ' + err } : o)) },
+      onNodeRetry: (nid, _l, msg) => { updateNodeStatus(nid, 'running'); setNodeOutputs(prev => prev.map(o => o.nodeId === nid ? { ...o, status: 'running' as const, content: o.content + '\n\n🔄 ' + msg } : o)) },
       onDone: () => {
         setRunning(false); resumeRef.current = { outputs: {}, active: false }; setResumeMode(false)
         setNodeOutputs(prev => prev.map(o => o.status === 'pending' ? { ...o, status: 'done' as const, content: '工作流结束' } : o))

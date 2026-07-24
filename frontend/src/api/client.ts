@@ -1,4 +1,4 @@
-import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, PaginatedRunList, MultiAgentSSEEvent, WorkspaceTreeItem, DashboardStats, ImportPayload } from '../types'
+import type { Provider, ProviderForm, ModelsResponse, FetchModelsRequest, Bot, BotForm, Tool, Conversation, Message, ChatRequest, Orchestration, OrchestrationForm, OrchestrationRun, PaginatedRunList, MultiAgentSSEEvent, WorkspaceTreeItem, DashboardStats, ImportPayload, SystemSettings, SystemSettingsUpdate, GenerateFromBioResponse, GenerateIdResponse } from '../types'
 
 const BASE = '/api'
 
@@ -34,6 +34,11 @@ export const botsApi = {
   update: (id: number, data: Partial<BotForm>) => request<Bot>(`/bots/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: number) => request<void>(`/bots/${id}`, { method: 'DELETE' }),
   updateTools: (botId: number, tool_ids: number[]) => request<void>(`/bots/${botId}/tools`, { method: 'PUT', body: JSON.stringify({ tool_ids }) }),
+  generateFromBio: (bio: string) =>
+    request<GenerateFromBioResponse>('/bots/generate-from-bio', { method: 'POST', body: JSON.stringify({ bio }) }),
+  generateId: (name: string) =>
+    request<GenerateIdResponse>('/bots/generate-id', { method: 'POST', body: JSON.stringify({ name }) }),
+  workspace: (id: number) => request<WorkspaceTreeItem[]>(`/bots/${id}/workspace`),
 }
 
 // Tools
@@ -105,6 +110,13 @@ export const statsApi = {
   get: () => request<DashboardStats>('/stats'),
 }
 
+// System Settings
+export const systemSettingsApi = {
+  get: () => request<SystemSettings>('/system-settings'),
+  update: (data: SystemSettingsUpdate) =>
+    request<SystemSettings>('/system-settings', { method: 'PUT', body: JSON.stringify(data) }),
+}
+
 // Orchestrations
 export const orchestrationsApi = {
   list: () => request<Orchestration[]>('/orchestrations'),
@@ -152,6 +164,7 @@ export function orchestrationStream(
     onNodeEnd: (nodeId: number, label: string, output: string) => void
     onNodeSkip: (nodeId: number, label: string) => void
     onNodeError: (nodeId: number, label: string, error: string) => void
+    onNodeRetry: (nodeId: number, label: string, message: string) => void
     onDone: (result: Record<string, unknown>) => void
     onStopped: () => void
     onError: (err: string) => void
@@ -205,6 +218,9 @@ export function orchestrationStream(
                 break
               case 'node_error':
                 callbacks.onNodeError(evt.node_id!, evt.node_label!, evt.content || '')
+                break
+              case 'node_retry':
+                callbacks.onNodeRetry(evt.node_id!, evt.node_label!, evt.content || '')
                 break
               case 'orchestration_done':
                 if (evt.failed) {
